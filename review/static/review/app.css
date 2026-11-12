@@ -34,6 +34,8 @@ h1 { font-size: 27px; line-height: 1.2; letter-spacing: -.7px; margin: 8px 0; }
 .path { color: var(--muted); font: 12px ui-monospace, monospace; overflow-wrap: anywhere; }
 .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 24px 0 12px; padding: 14px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .toolbar label { margin-right: auto; font-size: 12px; }
+.toolbar { position: sticky; top: var(--notice-height, 0px); z-index: 9; background: #f5f7fa; }
+html { scroll-padding-top: calc(var(--notice-height, 0px) + var(--toolbar-height, 0px)); }
 .toolbar select { margin-left: 7px; max-width: 290px; }
 .hint { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .file { margin-top: 24px; background: white; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; scroll-margin-top: 16px; }

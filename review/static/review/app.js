@@ -9,6 +9,37 @@ let folder = null;
 let folderRequest = 0;
 let handoffSnapshotId = null;
 let importedSnapshotId = null;
+let handoffPosition = null;
+
+// Notice text and wrapped toolbar buttons can change height on small screens.
+const stickySizes = new ResizeObserver(() => {
+  document.documentElement.style.setProperty('--notice-height', `${$('#notice').offsetHeight}px`);
+  document.documentElement.style.setProperty('--toolbar-height', `${$('.toolbar').offsetHeight}px`);
+});
+stickySizes.observe($('#notice'));
+stickySizes.observe($('.toolbar'));
+
+function readingPosition() {
+  const top = Math.max(0, $('.toolbar').getBoundingClientRect().bottom);
+  const row = [...document.querySelectorAll('#diff tr[data-line]')].find(
+    row => row.getBoundingClientRect().top >= top);
+  return {x: window.scrollX, y: window.scrollY, path: row?.dataset.path,
+    line: Number(row?.dataset.line), offset: row?.getBoundingClientRect().top - top};
+}
+
+async function restoreReadingPosition(position) {
+  // Wait for dialog focus restoration and the notice's new sticky height.
+  await new Promise(requestAnimationFrame);
+  const rows = [...document.querySelectorAll('#diff tr[data-line]')].filter(
+    row => row.dataset.path === position.path);
+  const row = rows.reduce((nearest, row) => !nearest ||
+    Math.abs(Number(row.dataset.line) - position.line) <
+    Math.abs(Number(nearest.dataset.line) - position.line) ? row : nearest, null);
+  const top = $('#notice').offsetHeight + $('.toolbar').offsetHeight;
+  const y = row && position.y > 0 ?
+    window.scrollY + row.getBoundingClientRect().top - top - position.offset : position.y;
+  window.scrollTo({left: position.x, top: Math.max(0, y), behavior: 'instant'});
+}
 
 function node(tag, className, text) {
   const element = document.createElement(tag);
@@ -419,6 +450,7 @@ $('#export').onclick = () => act(async () => {
   $('#copy-again').classList.add('primary');
   $('#prompt').value = result.prompt;
   $('#response-path').textContent = `Response file: ${result.response_path}`;
+  handoffPosition = readingPosition();
   $('#handoff-dialog').showModal();
   $('#copy-again').focus({preventScroll: true});
   // Keep draft replies intact while refreshing handoff metadata.
@@ -426,6 +458,7 @@ $('#export').onclick = () => act(async () => {
   $('#batch-info').textContent = 'Handoff ready. Import replies after Codex writes its response file.';
 });
 async function importReplies(snapshotId) {
+  const position = $('#handoff-dialog').open ? handoffPosition : readingPosition();
   const result = await api('import/', {snapshot_id: snapshotId});
   importedSnapshotId = result.snapshot_id;
   await loadSnapshot(result.snapshot_id);
@@ -447,6 +480,7 @@ async function importReplies(snapshotId) {
     replies.onclick = () => act(() => loadSnapshot(snapshotId));
     $('#notice').append(document.createTextNode(' '), replies);
   }
+  if (!$('#handoff-dialog').open && position) await restoreReadingPosition(position);
 }
 $('#import').onclick = () => act(() => importReplies(snapshot.id));
 $('#handoff-import').onclick = () => act(() => importReplies(handoffSnapshotId));
