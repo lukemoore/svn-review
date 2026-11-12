@@ -1,0 +1,121 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SVN Review</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{% static 'review/app.css' %}">
+  <script defer src="{% static 'review/app.js' %}"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">SVN <span>Review</span></a>
+    <span class="local">LOCAL WORKSPACE</span>
+    <button id="new-review">New review</button>
+  </header>
+  <div id="notice" role="status" aria-live="polite" hidden></div>
+  <div class="layout">
+    <aside>
+      <label for="reviews">REVIEWS</label>
+      <select id="reviews"><option value="">Choose a review</option></select>
+      <div class="sidebar-heading">FILES <span id="file-count"></span></div>
+      <nav id="files" aria-label="Changed files"></nav>
+      <div class="sidebar-heading">THREADS <span id="thread-count"></span></div>
+      <nav id="threads" aria-label="Review threads"></nav>
+    </aside>
+    <main>
+      <section id="welcome" class="welcome">
+        <div class="eyebrow">YOUR DIFF. YOUR NOTES. ONE HANDOFF.</div>
+        <h1>Review locally.<br>Continue with Codex.</h1>
+        <p>Open an SVN working copy, select lines, and collect your questions
+          and requested changes. Copy a prompt into a fresh Codex session,
+          then import its answers here.</p>
+        <button class="primary" id="start-review">Open a working copy</button>
+      </section>
+      <section id="review" hidden>
+        <div class="review-heading">
+          <div><div class="eyebrow">WORKING COPY REVIEW</div>
+            <h1 id="title"></h1><p id="path" class="path"></p></div>
+          <button id="refresh">Capture new snapshot</button>
+        </div>
+        <div class="toolbar">
+          <label>Snapshot <select id="snapshots"></select></label>
+          <button id="general">Add general comment</button>
+          <button id="import">Import replies</button>
+          <button id="export" class="primary">Copy Codex prompt</button>
+        </div>
+        <p class="hint">Select code text, then click <strong>Add comment</strong>
+          beside your selection. Or click a new-side line number and Shift-click
+          another to select a range. Comments stay with this snapshot.</p>
+        <div id="batch-info" class="hint"></div>
+        <div id="general-threads"></div>
+        <div id="diff"></div>
+      </section>
+    </main>
+  </div>
+  <button id="selection-comment" class="primary" type="button" hidden>Add comment</button>
+  <form id="composer" class="composer" hidden>
+    <div><strong id="selection-label"></strong>
+      <button type="button" id="cancel-comment">Cancel</button></div>
+    <label for="comment-body" class="sr-only">Question or requested change</label>
+    <textarea id="comment-body" required maxlength="50000" rows="3"
+      placeholder="Ask a question or describe a change…"></textarea>
+    <button class="primary" type="submit">Save comment</button>
+  </form>
+  <dialog id="create-dialog">
+    <form id="create-form">
+      <div class="eyebrow">NEW REVIEW</div><h2>Open a working copy</h2>
+      <p id="create-error" role="alert" hidden></p>
+      <label for="wc-path">Local directory</label>
+      <div class="path-picker">
+        <input id="wc-path" required placeholder="/path/to/working-copy" autofocus>
+        <button id="browse" type="button">Browse…</button>
+      </div>
+      <label for="review-title">Review title <span class="muted">(optional)</span></label>
+      <input id="review-title" maxlength="200" placeholder="What are you changing?">
+      <p class="hint">Captures tracked SVN changes with 12 lines of context.
+        Unversioned files must be added to SVN before they appear.</p>
+      <div class="dialog-actions"><button type="button" id="cancel-create">Cancel</button>
+        <button class="primary" type="submit">Capture diff</button></div>
+    </form>
+  </dialog>
+  <dialog id="folder-dialog" aria-labelledby="folder-title">
+    <h2 id="folder-title">Choose a working-copy folder</h2>
+    <p id="folder-error" role="alert" hidden></p>
+    <form id="folder-location-form" class="path-picker">
+      <label for="folder-location" class="sr-only">Folder location</label>
+      <input id="folder-location" placeholder="/path/to/folder">
+      <button type="submit">Go</button>
+    </form>
+    <div class="folder-tools">
+      <button id="folder-home" type="button">Home</button>
+      <button id="folder-up" type="button">Up one folder</button>
+      <label><input id="folder-hidden" type="checkbox"> Show hidden folders</label>
+    </div>
+    <nav id="folder-list" aria-label="Folders"></nav>
+    <div class="dialog-actions">
+      <button id="folder-cancel" type="button">Cancel</button>
+      <button id="folder-select" type="button" class="primary">Use this folder</button>
+    </div>
+  </dialog>
+  <dialog id="handoff-dialog">
+    <div class="eyebrow">FRESH SESSION HANDOFF</div><h2 id="handoff-title">Prompt ready</h2>
+    <p>Paste this into a new Codex session on this computer. When Codex finishes,
+      select <strong>Import replies</strong> to load its response file and capture
+      the updated code. Earlier comments stay on their original snapshot.</p>
+    <label for="prompt">Review prompt</label>
+    <textarea id="prompt" readonly rows="12"></textarea>
+    <p class="hint" id="response-path"></p>
+    <p id="handoff-status" role="status" aria-live="polite" hidden></p>
+    <div id="handoff-results" hidden>
+      <button id="view-replies">View replies</button>
+      <button id="view-code">View current code</button>
+    </div>
+    <div class="dialog-actions"><button id="close-handoff">Close</button>
+      <button class="primary" id="copy-again">Copy prompt</button>
+      <button id="handoff-import" class="primary" hidden>Import replies</button></div>
+  </dialog>
+</body>
+</html>

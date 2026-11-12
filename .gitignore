@@ -1,0 +1,31 @@
+# Local reviews, source diffs, replies, and database files.
+/var/
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.db
+*.db-*
+
+# Local environments and Python caches.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Credentials and machine-specific settings.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
+.assistant/
+.idea/
+.vscode/
+.DS_Store
