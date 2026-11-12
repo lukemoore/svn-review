@@ -8,24 +8,31 @@ comment threads through a JSON file. No API keys or model calls are used.
 
 Requires Python 3.10 or later and the `svn` command.
 
-Clone the project, then set up your local database:
+Clone the project and start it:
 
 ```sh
 git clone https://github.com/lukemoore/svn-review.git
 cd svn-review
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python manage.py migrate
-.venv/bin/python manage.py runserver 127.0.0.1:8765 --noreload
+python3 start.py
 ```
 
-Open <http://127.0.0.1:8765>. Keep the server bound to loopback. This is a
+The launcher sets up the Python environment, installs dependencies, updates
+your local database, and opens <http://127.0.0.1:8765> in your default browser.
+The first run needs internet access to install dependencies. Later starts only
+install dependencies when `requirements.txt` changes.
+
+Keep the terminal open while using the app. Press **Ctrl+C** to stop it.
+Next time, run `python3 start.py` again. You can also run the script by its full
+path from any directory. On Windows, use `py start.py` instead.
+If the browser does not open, open the URL shown in the terminal.
+
+The server listens only on your own computer. This is a
 single-user local tool with access to your local working copies, without login
 or remote access support.
 
-`migrate` creates an empty `var/reviews.sqlite3` on first setup. On later runs,
-it applies database updates and keeps existing reviews. No example reviews or
-personal data are included in the repository.
+The launcher runs `migrate` to create an empty `var/reviews.sqlite3` on first
+setup. On later runs, it applies database updates and keeps existing reviews.
+No example reviews or personal data are included in the repository.
 
 ## Update and keep your data
 
@@ -34,9 +41,7 @@ Then run:
 
 ```sh
 git pull --ff-only
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python manage.py migrate
-.venv/bin/python manage.py runserver 127.0.0.1:8765 --noreload
+python3 start.py
 ```
 
 Git ignores `var/`, so normal pulls do not replace your database or handoffs.
