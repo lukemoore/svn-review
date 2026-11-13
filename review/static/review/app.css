@@ -96,7 +96,6 @@ button:disabled { cursor: default; opacity: .5; }
 .markdown th, .markdown td { padding: 6px 10px; border: 1px solid var(--border); }
 .reply-form { padding: 10px 14px; display: flex; align-items: flex-end; gap: 10px; border-top: 1px solid var(--border); }
 .reply-form button { white-space: nowrap; }
-.reply-form textarea { font-size: 12px; }
 .composer { position: fixed; bottom: 0; left: 240px; right: 0; padding: 16px 32px; background: #fff; border-top: 2px solid #88a8d7; box-shadow: 0 -8px 30px #192d4215; z-index: 5; }
 .composer > div { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .composer strong { overflow-wrap: anywhere; }
