@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import json
 import re
@@ -85,21 +86,23 @@ def create_review(data):
 
 def refresh_review(data):
     review = Review.objects.get(pk=data['review_id'])
-    _, revision, diff = capture_diff(review.working_copy)
-    snapshot = save_snapshot(review, revision, diff)
-    return {'snapshot_id': snapshot.id}
+    snapshot, created = capture_current_snapshot(review)
+    return {'snapshot_id': snapshot.id, 'snapshot_created': created}
 
 
 def snapshot_data(snapshot_id):
     snapshot = Snapshot.objects.select_related('review').get(pk=snapshot_id)
     review = snapshot.review
+    snapshots = list(review.snapshot_set.order_by('id').values(
+        'id', 'created'))
+    for number, item in enumerate(snapshots, 1):
+        item['number'] = number
     return {
         'id': snapshot.id, 'review_id': review.id, 'title': review.title,
         'working_copy': review.working_copy, 'revision': snapshot.revision,
         'created': snapshot.created.isoformat(), 'digest': snapshot.digest,
         'files': snapshot.files,
-        'snapshots': list(review.snapshot_set.order_by('-id').values(
-            'id', 'created')),
+        'snapshots': snapshots[::-1],
         'comments': [comment_data(c) for c in
                      snapshot.comment_set.prefetch_related('message_set')
                      .order_by('created')],
@@ -187,8 +190,9 @@ def export_prompt(data):
          'needs_review': True}
         for b in blocks]}
     prompt = (
-        'Respond to my existing SVN review comments in a fresh Codex '
-        'session. Implement the requested changes and answer my questions. '
+        'Respond to my existing code review comments. Implement the '
+        'requested changes and answer my questions in this session. '
+        'This handoff works in a new or existing coding-agent session. '
         'Do not start a new code review. Do not load or invoke any '
         'repository review skill (including a skill named review), or run '
         'its review workflow. This instruction overrides repository '
@@ -204,7 +208,7 @@ def export_prompt(data):
         'each has a stable comment ID and the full conversation. Answer '
         'the latest user message in each block. Implement requested changes '
         'and run proportionate checks. Do not commit or revert unrelated '
-        'changes. The snapshot is historical: inspect the current SVN diff '
+        'changes. The snapshot is historical: inspect the current working-copy diff '
         'and files, and map the reviewed lines to the current code before '
         'editing. If the context no longer matches, explain that in the '
         'reply instead of guessing.\n\n'
@@ -343,22 +347,55 @@ def capture_diff(path):
     working_copy = Path(path).expanduser().resolve(strict=True)
     if not working_copy.is_dir():
         raise ValueError('Choose a working-copy directory.')
-    info = ET.fromstring(run_svn(working_copy, 'info', '--xml', '.'))
-    entry = info.find('entry')
-    revision = entry.get('revision', '')
-    # The internal diff avoids executing a user's configured external tool.
-    diff = run_svn(working_copy, 'diff', '--internal-diff',
-                   '--extensions', '-U12', '--', '.')
+    vcs = detect_repository(working_copy)
+    if vcs == 'git':
+        revision = run_repository(
+            working_copy, 'git', 'rev-parse', '--verify', '--quiet', 'HEAD',
+            allow_missing=True).strip()
+        # An unborn branch has no HEAD. Compare its index to an empty tree.
+        base = revision or run_repository(
+            working_copy, 'git', 'hash-object', '-t', 'tree', '--stdin').strip()
+        diff = run_repository(
+            working_copy, 'git', '-c', 'core.quotePath=true', 'diff',
+            '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames',
+            '--ignore-submodules=none', '--submodule=short', '--relative',
+            '--src-prefix=a/', '--dst-prefix=b/', '--unified=12',
+            base, '--', '.')
+        revision = revision or 'unborn HEAD'
+    else:
+        info = ET.fromstring(run_svn(working_copy, 'info', '--xml', '.'))
+        revision = info.find('entry').get('revision', '')
+        # The internal diff avoids executing a configured external tool.
+        diff = run_svn(working_copy, 'diff', '--internal-diff',
+                       '--extensions', '-U12', '--', '.')
     return str(working_copy), revision, diff
 
 
+def detect_repository(directory):
+    # Prefer the nearest checkout, including Git worktrees (.git files).
+    # SVN wins a tie because some SVN checkouts have injected Git metadata.
+    for parent in (directory, *directory.parents):
+        if (parent / '.svn').is_dir():
+            return 'svn'
+        if (parent / '.git').exists():
+            return 'git'
+    raise ValueError('Choose a Git or SVN working-copy directory.')
+
+
 def run_svn(directory, *arguments):
+    return run_repository(directory, 'svn', '--non-interactive', *arguments)
+
+
+def run_repository(directory, command, *arguments, allow_missing=False):
     try:
         result = subprocess.run(
-            ['svn', '--non-interactive', *arguments], cwd=directory,
+            [command, *arguments], cwd=directory, input=b'',
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
     except subprocess.TimeoutExpired:
-        raise ValueError('SVN took longer than 60 seconds.') from None
+        raise ValueError(
+            f'{command.upper()} took longer than 60 seconds.') from None
+    if allow_missing and result.returncode == 1:
+        return ''
     if result.returncode:
         raise ValueError(result.stderr.decode('utf-8', errors='replace').strip())
     if len(result.stdout) > 20 * 1024 * 1024:
@@ -377,14 +414,25 @@ def parse_diff(diff):
     file = None
     old = new = old_left = new_left = 0
     for line in diff.splitlines():
-        # Counters distinguish source lines from SVN's file/property headers.
+        # Counters distinguish source lines from file/property headers.
         in_hunk = old_left > 0 or new_left > 0
+        if not in_hunk and line.startswith('diff --git '):
+            # Capture disables renames, so both header paths have equal
+            # length, even with spaces or Git's quoted escape sequences.
+            paths = line[len('diff --git '):]
+            path = paths[:len(paths) // 2]
+            if path.startswith('"'):
+                path = ast.literal_eval(path).encode('latin1').decode(
+                    'utf-8', errors='replace')
+            file = {'path': path[2:], 'rows': []}
+            files.append(file)
+            continue
         if not in_hunk and line.startswith('Index: '):
             file = {'path': line[7:], 'rows': []}
             files.append(file)
             continue
         if file is None:
-            file = {'path': '(SVN output)', 'rows': []}
+            file = {'path': '(diff output)', 'rows': []}
             files.append(file)
         match = re.match(r'^@@ -(\d+)(?:,(\d+))? '
                          r'\+(\d+)(?:,(\d+))? @@', line)

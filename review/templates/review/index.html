@@ -4,14 +4,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SVN Review</title>
+  <title>Code Review</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="{% static 'review/app.css' %}">
   <script defer src="{% static 'review/app.js' %}"></script>
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">SVN <span>Review</span></a>
+    <a class="brand" href="/">Code <span>Review</span></a>
     <span class="local">LOCAL WORKSPACE</span>
     <button id="new-review">New review</button>
   </header>
@@ -19,7 +19,7 @@
   <div class="layout">
     <aside>
       <label for="reviews">REVIEWS</label>
-      <select id="reviews"><option value="">Choose a review</option></select>
+      <select id="reviews"><option value="" disabled selected>Choose a review</option></select>
       <div class="sidebar-heading">FILES <span id="file-count"></span></div>
       <nav id="files" aria-label="Changed files"></nav>
       <div class="sidebar-heading">THREADS <span id="thread-count"></span></div>
@@ -28,9 +28,9 @@
     <main>
       <section id="welcome" class="welcome">
         <div class="eyebrow">YOUR DIFF. YOUR NOTES. ONE HANDOFF.</div>
-        <h1>Review locally.<br>Continue with Codex.</h1>
-        <p>Open an SVN working copy, select lines, and collect your questions
-          and requested changes. Copy a prompt into a fresh Codex session,
+        <h1>Review locally.<br>Continue with your agent.</h1>
+        <p>Open a Git or SVN working copy, select lines, and collect your questions
+          and requested changes. Copy a prompt into your coding agent,
           then import its answers here.</p>
         <button class="primary" id="start-review">Open a working copy</button>
       </section>
@@ -38,17 +38,16 @@
         <div class="review-heading">
           <div><div class="eyebrow">WORKING COPY REVIEW</div>
             <h1 id="title"></h1><p id="path" class="path"></p></div>
-          <button id="refresh">Capture new snapshot</button>
         </div>
         <div class="toolbar">
           <label>Snapshot <select id="snapshots"></select></label>
+          <button id="refresh" title="Read local changes and save a new snapshot if the code changed. Earlier comments are kept.">Reload from disk</button>
           <button id="general">Add general comment</button>
           <button id="import">Import replies</button>
-          <button id="export" class="primary">Copy Codex prompt</button>
+          <button id="export" class="primary">Send comments to agent</button>
           <nav class="review-navigation" aria-label="Replies needing review">
-            <span id="review-progress" role="status"></span>
-            <button id="review-previous" type="button">Previous reply</button>
-            <button id="review-next" type="button">Next reply</button>
+            <button id="review-next" type="button">Next reply needing review <span id="review-count" class="review-count">0</span></button>
+            <span id="review-progress" class="sr-only" role="status"></span>
             <button id="latest-snapshot" type="button">Latest snapshot</button>
           </nav>
         </div>
@@ -61,6 +60,18 @@
       </section>
     </main>
   </div>
+  <nav id="comment-overview" class="comment-overview" aria-label="Comments in this snapshot" hidden>
+    <div class="comment-buttons">
+      <button id="comment-previous" type="button" aria-label="Previous comment" title="Previous comment (wraps to last)">↑</button>
+      <button id="comment-next" type="button" aria-label="Next comment" title="Next comment (wraps to first)">↓</button>
+    </div>
+    <span id="comment-progress" class="sr-only" role="status"></span>
+    <div id="comment-track" class="comment-track" aria-label="Comment locations">
+      <div id="comment-viewport" class="comment-viewport" aria-hidden="true"></div>
+      <div id="file-boundaries" aria-hidden="true"></div>
+      <div id="comment-bands"></div>
+    </div>
+  </nav>
   <button id="selection-comment" class="primary" type="button" hidden>Add comment</button>
   <form id="composer" class="composer" hidden>
     <div><strong id="selection-label"></strong>
@@ -81,8 +92,8 @@
       </div>
       <label for="review-title">Review title <span class="muted">(optional)</span></label>
       <input id="review-title" maxlength="200" placeholder="What are you changing?">
-      <p class="hint">Captures tracked SVN changes with 12 lines of context.
-        Unversioned files must be added to SVN before they appear.</p>
+      <p class="hint">Detects Git or SVN and captures tracked changes.
+        Add untracked files with Git or SVN before they appear.</p>
       <div class="dialog-actions"><button type="button" id="cancel-create">Cancel</button>
         <button class="primary" type="submit">Capture diff</button></div>
     </form>
@@ -107,9 +118,11 @@
     </div>
   </dialog>
   <dialog id="handoff-dialog">
-    <div class="eyebrow">FRESH SESSION HANDOFF</div><h2 id="handoff-title">Prompt ready</h2>
-    <p>Paste this into a new Codex session on this computer. When Codex finishes,
-      select <strong>Import replies</strong> to load its response file and capture
+    <div class="eyebrow">AGENT HANDOFF</div><h2 id="handoff-title">Prompt ready</h2>
+    <p>Paste this into a new or existing session in Codex, Claude Code, Pi,
+      or another coding agent with access to these local files.
+      When your agent finishes, click <strong>Import replies</strong>
+      to load its response file and capture
       the updated code. Earlier comments stay on their original snapshot.</p>
     <label for="prompt">Review prompt</label>
     <textarea id="prompt" readonly rows="12"></textarea>

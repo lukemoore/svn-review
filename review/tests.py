@@ -91,6 +91,29 @@ class ReviewTests(TestCase):
         listing = self.client.get('/api/reviews/').json()['reviews']
         self.assertEqual(listing[0]['latest_snapshot'], second['snapshot_id'])
 
+    def test_reload_reuses_unchanged_snapshot(self):
+        first = self.create()
+        comment_id = self.comment(first)
+        result = self.post('refresh', {'review_id': first.review_id})
+        self.assertEqual(result, {
+            'snapshot_id': first.id, 'snapshot_created': False})
+        self.assertEqual(Snapshot.objects.filter(
+            review=first.review).count(), 1)
+        self.assertEqual(Comment.objects.get(pk=comment_id).snapshot_id,
+                         first.id)
+
+    def test_snapshot_numbers_belong_to_each_review(self):
+        first = self.create()
+        other = self.create()
+        self.source.write_text(self.original + 'another change\n')
+        latest = self.post('refresh', {'review_id': first.review_id})
+        data = self.client.get('/api/snapshot/', {'id': first.id}).json()
+        self.assertEqual([(s['id'], s['number']) for s in data['snapshots']],
+                         [(latest['snapshot_id'], 2), (first.id, 1)])
+        data = self.client.get('/api/snapshot/', {'id': other.id}).json()
+        self.assertEqual([(s['id'], s['number']) for s in data['snapshots']],
+                         [(other.id, 1)])
+
     def test_review_queue_spans_snapshots_and_can_be_acknowledged(self):
         first = self.create()
         comment_id = self.comment(first)
@@ -154,13 +177,15 @@ class ReviewTests(TestCase):
         self.assertEqual(self.client.get('/api/snapshot/', {
             'id': snapshot.id}).json()['review_queue'], [])
 
-    def test_fresh_session_handoff_import_and_followup(self):
+    def test_agent_handoff_import_and_followup(self):
         snapshot = self.create()
         comment_id = self.comment(snapshot)
         handoff = self.post('export', {'snapshot_id': snapshot.id})
         for required in (str(self.working_copy), 'context.json',
                          'snapshot.diff', 'response.json', comment_id):
             self.assertIn(required, handoff['prompt'])
+        self.assertIn('new or existing coding-agent session', handoff['prompt'])
+        self.assertNotIn('Codex', handoff['prompt'])
         directory = Path(handoff['response_path']).parent
         context = json.loads((directory / 'context.json').read_text())
         self.assertEqual(context['blocks'][0]['messages'][0]['body'],
@@ -323,3 +348,115 @@ class ReviewTests(TestCase):
         for path in (self.source, self.root / 'missing'):
             self.assertEqual(self.client.get('/api/directories/', {
                 'path': str(path)}).status_code, 400)
+
+
+class GitReviewTests(TestCase):
+    post = ReviewTests.post
+    create = ReviewTests.create
+    comment = ReviewTests.comment
+    response_file = ReviewTests.response_file
+    test_capture_context_and_snapshot_preservation = (
+        ReviewTests.test_capture_context_and_snapshot_preservation)
+    test_agent_handoff_import_and_followup = (
+        ReviewTests.test_agent_handoff_import_and_followup)
+    test_import_captures_changes_and_preserves_reviewed_snapshot = (
+        ReviewTests.test_import_captures_changes_and_preserves_reviewed_snapshot)
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix='git-review-test-')
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.working_copy = self.root / 'working copy'
+        self.working_copy.mkdir()
+        self.git('init')
+        self.git('config', 'user.name', 'Review Test')
+        self.git('config', 'user.email', 'review@example.invalid')
+        self.git('config', 'commit.gpgsign', 'false')
+        self.source = self.working_copy / 'sample.txt'
+        self.original = ''.join(f'line {n}\n' for n in range(1, 71))
+        self.source.write_text(self.original)
+        (self.working_copy / 'removed.txt').write_text('removed\n')
+        self.git('add', '.')
+        self.git('commit', '-m', 'Test fixture')
+        self.source.write_text(self.original.replace(
+            'line 3\n', '<script>alert("source")</script>\n'))
+        self.override = override_settings(DATA_DIR=self.root / 'data')
+        self.override.enable()
+        self.addCleanup(self.override.disable)
+
+    def git(self, *arguments):
+        return subprocess.run(
+            ['git', '-C', str(self.working_copy), *arguments],
+            check=True, capture_output=True).stdout.decode().strip()
+
+    def test_staged_unstaged_added_deleted_and_untracked(self):
+        self.git('add', 'sample.txt')
+        self.source.write_text(self.source.read_text() + 'unstaged\n')
+        names = ['space name.txt', 'café.txt', 'tab\tname.txt',
+                 'quote"name.txt', 'back\\slash.txt']
+        for name in names:
+            (self.working_copy / name).write_text('added without newline')
+            self.git('add', '--', name)
+        (self.working_copy / 'removed.txt').unlink()
+        (self.working_copy / 'untracked.txt').write_text('excluded\n')
+        snapshot = self.create()
+        self.assertEqual(snapshot.revision, self.git('rev-parse', 'HEAD'))
+        files = {f['path']: f['rows'] for f in snapshot.files}
+        self.assertEqual(set(files), {*names, 'sample.txt', 'removed.txt'})
+        self.assertIn('<script>', snapshot.diff)
+        self.assertIn('+unstaged', snapshot.diff)
+        for name in names:
+            self.assertTrue(any(r['kind'] == 'add' and r['new'] == 1
+                                for r in files[name]))
+        self.assertTrue(any(r['kind'] == 'remove'
+                            for r in files['removed.txt']))
+
+    def test_subdirectory_and_unborn_branch(self):
+        self.working_copy = self.root / 'new repo'
+        self.working_copy.mkdir()
+        self.git('init')
+        folder = self.working_copy / 'nested'
+        folder.mkdir()
+        (folder / 'new.txt').write_text('first\n')
+        (self.working_copy / 'outside.txt').write_text('outside\n')
+        self.git('add', '.')
+        self.working_copy = folder
+        snapshot = self.create()
+        self.assertEqual(snapshot.revision, 'unborn HEAD')
+        self.assertEqual([f['path'] for f in snapshot.files], ['new.txt'])
+
+    def test_worktree_and_clean_snapshot(self):
+        worktree = self.root / 'linked worktree'
+        self.git('worktree', 'add', '-b', 'test-worktree', str(worktree))
+        self.working_copy = worktree
+        self.assertTrue((worktree / '.git').is_file())
+        self.assertEqual(self.create().files, [])
+        (worktree / 'sample.txt').write_text('changed\n')
+        self.assertEqual(self.create().files[0]['path'], 'sample.txt')
+
+    def test_binary_mode_rename_and_external_diff_configuration(self):
+        binary = self.working_copy / 'binary space.bin'
+        binary.write_bytes(b'\x00original')
+        self.git('add', str(binary))
+        self.git('commit', '-m', 'Binary fixture')
+        binary.write_bytes(b'\x00changed')
+        self.git('mv', 'removed.txt', 'renamed.txt')
+        self.git('update-index', '--chmod=+x', 'renamed.txt')
+        self.git('config', 'diff.external', 'nonexistent-review-diff-tool')
+        snapshot = self.create()
+        files = {f['path']: f['rows'] for f in snapshot.files}
+        self.assertIn('removed.txt', files)
+        self.assertIn('renamed.txt', files)
+        self.assertTrue(any('Binary files' in r['text']
+                            for r in files['binary space.bin']))
+
+    def test_page_title_and_nearest_repository(self):
+        self.assertContains(self.client.get('/'), '<title>Code Review</title>')
+        nested = self.working_copy / 'nested svn'
+        repository = self.root / 'svn repository'
+        ReviewTests.command('svnadmin', 'create', str(repository))
+        ReviewTests.command('svn', 'checkout', repository.as_uri(), str(nested))
+        self.working_copy = nested
+        snapshot = self.create()
+        self.assertEqual(snapshot.revision, '0')
+        self.assertEqual(snapshot.diff, '')

@@ -10,10 +10,13 @@ let folderRequest = 0;
 let handoffSnapshotId = null;
 let importedSnapshotId = null;
 let handoffPosition = null;
-let reviewMessageId = null;
 const snapshotPositions = new Map();
 let positionTimer;
 let actionPosition = null;
+let commentTargets = [];
+let fileBoundaries = [];
+let activeCommentId = null;
+let overviewFrame;
 
 function rememberPosition(position = readingPosition()) {
   if (!snapshot) return;
@@ -130,12 +133,17 @@ async function loadReviews() {
   const data = await api('reviews/');
   $('#reviews').replaceChildren(node('option', '', 'Choose a review'));
   $('#reviews').firstChild.value = '';
+  $('#reviews').firstChild.disabled = true;
   for (const review of data.reviews) {
     const option = node('option', '', review.title);
     option.value = review.latest_snapshot;
     option.dataset.review = review.id;
+    option.title = review.working_copy || review.title;
     $('#reviews').append(option);
   }
+  const create = node('option', '', '＋ New review…');
+  create.value = 'new';
+  $('#reviews').append(create);
   if (snapshot) selectReview();
 }
 
@@ -163,33 +171,40 @@ async function loadSnapshot(id) {
 
 function renderReviewNavigation() {
   const queue = snapshot.review_queue;
-  const index = queue.findIndex(message => message.id === reviewMessageId);
   const count = queue.length === 1 ? '1 reply needs review' : `${queue.length} replies need review`;
-  $('#review-progress').textContent = index < 0 ? count :
-    `Reply ${index + 1} of ${queue.length} needing review`;
-  $('#review-previous').disabled = $('#review-next').disabled = !queue.length;
-  $('#latest-snapshot').disabled = snapshot.id === snapshot.snapshots[0].id;
+  $('#review-progress').textContent = count;
+  $('#review-count').textContent = queue.length;
+  $('#review-count').hidden = !queue.length;
+  $('#review-next').disabled = !queue.length;
+  $('#review-next').setAttribute('aria-label', `Next reply needing review, ${count}`);
+  const latest = snapshot.id === snapshot.snapshots[0].id;
+  $('#latest-snapshot').disabled = latest;
+  $('#refresh').hidden = !latest;
 }
 
-async function jumpToReview(direction) {
+async function jumpToReview() {
   const queue = snapshot.review_queue;
   if (!queue.length) return;
-  const index = queue.findIndex(message => message.id === reviewMessageId);
-  const next = index < 0 ? (direction > 0 ? 0 : queue.length - 1) :
-    (index + direction + queue.length) % queue.length;
-  const message = queue[next];
-  reviewMessageId = message.id;
+  const message = queue[0];
   await loadSnapshot(message.comment__snapshot_id);
   const entry = document.getElementById(`message-${message.id}`);
   if (entry) {
     entry.scrollIntoView({block: 'start', behavior: 'instant'});
     entry.focus({preventScroll: true});
+    await api('reviewed/', {message_id: message.id});
+    snapshot.review_queue = snapshot.review_queue.filter(item => item.id !== message.id);
+    for (const comment of snapshot.comments) {
+      const opened = comment.messages.find(item => item.id === message.id);
+      if (opened) opened.reviewed = true;
+    }
+    entry.classList.remove('needs-review');
+    entry.querySelector('.review-message')?.remove();
+    renderReviewNavigation();
     rememberPosition();
   }
 }
 
-$('#review-previous').onclick = () => act(() => jumpToReview(-1));
-$('#review-next').onclick = () => act(() => jumpToReview(1));
+$('#review-next').onclick = () => act(() => jumpToReview());
 $('#latest-snapshot').onclick = () => act(() => loadSnapshot(snapshot.snapshots[0].id));
 
 function render() {
@@ -200,11 +215,12 @@ function render() {
   selectReview();
   $('#snapshots').replaceChildren();
   snapshot.snapshots.forEach((item, index) => {
-    const option = node('option', '', `#${item.id} · ${new Date(item.created).toLocaleString()}${index === 0 ? ' · latest' : ''}`);
+    const option = node('option', '', `#${item.number} · ${new Date(item.created).toLocaleString()}${index === 0 ? ' · latest' : ''}`);
     option.value = item.id;
     option.selected = item.id === snapshot.id;
     $('#snapshots').append(option);
   });
+  activeCommentId = null;
   renderReviewNavigation();
   $('#files').replaceChildren();
   $('#threads').replaceChildren();
@@ -227,7 +243,13 @@ function render() {
   }
   snapshot.files.forEach((file, index) => {
     const fileId = `file-${index}`;
-    const link = node('a', '', file.path);
+    const change = fileChange(file);
+    const link = node('a', 'file-link');
+    const badge = node('span', `file-status ${change.kind}`, change.code);
+    badge.setAttribute('aria-hidden', 'true');
+    link.append(badge, node('span', 'file-name', file.path));
+    link.title = `${change.label}: ${file.path}`;
+    link.setAttribute('aria-label', link.title);
     link.href = `#${fileId}`;
     $('#files').append(link);
     const section = node('section', 'file');
@@ -276,6 +298,144 @@ function render() {
     snapshot.comments.filter(c => c.path === file.path && !shown.has(c.id)).forEach(c => section.append(thread(c)));
     $('#diff').append(section);
   });
+  renderCommentOverview();
+}
+
+function fileChange(file) {
+  // Use saved headers, not today's working copy or counts of changed lines.
+  // Emptying an existing file, for example, is still a modification.
+  const headers = file.rows.filter(row => row.kind === 'meta').map(row => row.text);
+  if (headers.some(text => text.startsWith('new file mode ') ||
+      /^--- (?:\/dev\/null$|.*\t\((?:nonexistent|revision 0)\)$)/.test(text))) {
+    return {code: 'A', kind: 'added', label: 'Added'};
+  }
+  if (headers.some(text => text.startsWith('deleted file mode ') ||
+      /^\+\+\+ (?:\/dev\/null$|.*\t\(nonexistent\)$)/.test(text))) {
+    return {code: 'D', kind: 'deleted', label: 'Removed'};
+  }
+  // Older SVN binary diffs omit the headers needed to distinguish A/M/D.
+  if (headers.some(text => text.startsWith('Cannot display: file marked as a binary type.'))) {
+    return {code: '?', kind: 'unknown', label: 'Change type unavailable in saved diff'};
+  }
+  return {code: 'M', kind: 'modified', label: 'Modified'};
+}
+
+function renderCommentOverview() {
+  const comments = new Map(snapshot.comments.map(comment => [comment.id, comment]));
+  $('#file-boundaries').replaceChildren();
+  fileBoundaries = [...document.querySelectorAll('#diff .file')].flatMap(element =>
+    ['top', 'bottom'].map(edge => {
+      const line = node('div', 'file-boundary');
+      $('#file-boundaries').append(line);
+      return {element, edge, line};
+    }));
+  $('#comment-bands').replaceChildren();
+  commentTargets = [...document.querySelectorAll('#review .thread')].map(element => {
+    const comment = comments.get(element.id.slice('comment-'.length));
+    const label = `${comment.resolved ? 'Resolved' : 'Open'} comment: ${comment.path || 'General'}${
+      comment.start ? `, lines ${comment.start}–${comment.end}` : ''}`;
+    const band = node('button', `comment-band${comment.resolved ? ' resolved' : ''}`);
+    band.type = 'button';
+    band.title = `${label}\n${comment.messages[0].body}`;
+    band.setAttribute('aria-label', label);
+    band.onclick = () => jumpToComment(comment.id);
+    $('#comment-bands').append(band);
+    return {id: comment.id, element, band};
+  });
+  $('#comment-overview').hidden = false;
+  $('#comment-previous').disabled = $('#comment-next').disabled = !commentTargets.length;
+  $('#comment-progress').textContent = `${commentTargets.length} comments in this snapshot`;
+  scheduleCommentOverview();
+}
+
+function jumpToComment(id) {
+  const index = commentTargets.findIndex(target => target.id === id);
+  if (index < 0) return;
+  const target = commentTargets[index];
+  activeCommentId = id;
+  target.element.scrollIntoView({block: 'start', behavior: 'instant'});
+  target.element.tabIndex = -1;
+  target.element.focus({preventScroll: true});
+  $('#comment-progress').textContent = `Comment ${index + 1} of ${commentTargets.length}`;
+  rememberPosition();
+  scheduleCommentOverview();
+}
+
+function stepComment(direction) {
+  if (!commentTargets.length) return;
+  const top = Math.max(0, $('.toolbar').getBoundingClientRect().bottom);
+  let index = commentTargets.findIndex(target => target.id === activeCommentId);
+  const rect = commentTargets[index]?.element.getBoundingClientRect();
+  // After manual scrolling, navigate from the visible page instead of an old selection.
+  if (!rect || rect.bottom <= top || rect.top >= window.innerHeight) {
+    const candidates = commentTargets.map((target, index) => ({
+      index, top: target.element.getBoundingClientRect().top,
+    }));
+    const next = direction > 0 ? candidates.find(item => item.top > top + 1) :
+      candidates.reverse().find(item => item.top < top - 1);
+    index = next?.index ?? (direction > 0 ? 0 : commentTargets.length - 1);
+  } else {
+    index = (index + direction + commentTargets.length) % commentTargets.length;
+  }
+  jumpToComment(commentTargets[index].id);
+}
+
+function scheduleCommentOverview() {
+  if (overviewFrame) return;
+  overviewFrame = requestAnimationFrame(() => {
+    overviewFrame = null;
+    updateCommentOverview();
+  });
+}
+
+function updateCommentOverview() {
+  if (!snapshot) return;
+  const top = Math.max(0, $('.toolbar').getBoundingClientRect().bottom) + 8;
+  const bottom = $('#composer').hidden ? 12 : $('#composer').offsetHeight + 12;
+  $('#comment-overview').style.top = `${top}px`;
+  $('#comment-overview').style.bottom = `${bottom}px`;
+  const start = $('#general-threads').getBoundingClientRect().top;
+  const end = $('#diff').getBoundingClientRect().bottom;
+  const height = Math.max(1, end - start);
+  const percent = y => Math.max(0, Math.min(100, (y - start) / height * 100));
+  fileBoundaries.forEach(({element, edge, line}) => {
+    line.style.top = `${percent(element.getBoundingClientRect()[edge])}%`;
+  });
+  const trackHeight = $('#comment-track').clientHeight;
+  const count = commentTargets.length;
+  const spacing = Math.min(10, trackHeight / Math.max(1, count));
+  const bandHeight = Math.min(6, spacing * 0.6);
+  const positions = commentTargets.map(target =>
+    percent(target.element.getBoundingClientRect().top) / 100 *
+      (trackHeight - bandHeight));
+  // A large diff can put several threads in the same few pixels. Spread
+  // those markers just enough to keep each one visible and clickable.
+  for (let i = 1; i < count; i++) {
+    positions[i] = Math.max(positions[i], positions[i - 1] + spacing);
+  }
+  if (count) positions[count - 1] = Math.min(positions[count - 1], trackHeight - bandHeight);
+  for (let i = count - 2; i >= 0; i--) {
+    positions[i] = Math.min(positions[i], positions[i + 1] - spacing);
+  }
+  commentTargets.forEach((target, index) => {
+    target.band.style.top = `${positions[index]}px`;
+    target.band.style.height = `${bandHeight}px`;
+    target.band.classList.toggle('active', target.id === activeCommentId);
+    target.band.setAttribute('aria-current', target.id === activeCommentId ? 'true' : 'false');
+  });
+  const visibleStart = percent(top);
+  const visibleEnd = percent(window.innerHeight - bottom);
+  $('#comment-viewport').style.top = `${visibleStart}%`;
+  $('#comment-viewport').style.height = `${Math.max(0, visibleEnd - visibleStart)}%`;
+}
+
+$('#comment-previous').onclick = () => stepComment(-1);
+$('#comment-next').onclick = () => stepComment(1);
+window.addEventListener('scroll', scheduleCommentOverview, {passive: true});
+window.addEventListener('resize', scheduleCommentOverview);
+const commentSizes = new ResizeObserver(scheduleCommentOverview);
+for (const selector of ['#diff', '#general-threads', '.toolbar', '#notice', '#composer']) {
+  commentSizes.observe($(selector));
 }
 
 function thread(comment) {
@@ -314,7 +474,7 @@ function thread(comment) {
     const entry = node('div', `message ${message.author}`);
     entry.id = `message-${message.id}`;
     entry.tabIndex = -1;
-    entry.append(node('div', 'author', message.author === 'user' ? 'You' : 'Codex'));
+    entry.append(node('div', 'author', message.author === 'user' ? 'You' : 'Agent'));
     entry.append(node('div', 'message-body', message.body));
     if (message.author === 'codex' && message.needs_review && !message.reviewed && !comment.resolved) {
       entry.classList.add('needs-review');
@@ -485,6 +645,8 @@ async function copyPrompt() {
 
 function promptCopied() {
   $('#handoff-title').textContent = 'Prompt copied';
+  $('#handoff-status').textContent = 'Paste the prompt into your coding agent. When your agent finishes, click Import replies.';
+  $('#handoff-status').hidden = false;
   $('#copy-again').classList.remove('primary');
   $('#handoff-import').hidden = false;
   $('#handoff-import').focus({preventScroll: true});
@@ -493,7 +655,12 @@ function promptCopied() {
 // Manual copying is also available when clipboard access is blocked.
 $('#prompt').addEventListener('copy', () => setTimeout(promptCopied, 0));
 
-$('#new-review').onclick = $('#start-review').onclick = () => $('#create-dialog').showModal();
+function openNewReview() {
+  $('#create-error').hidden = true;
+  $('#create-dialog').showModal();
+}
+
+$('#new-review').onclick = $('#start-review').onclick = openNewReview;
 $('#cancel-create').onclick = () => $('#create-dialog').close();
 $('#create-form').onsubmit = event => {
   event.preventDefault();
@@ -505,14 +672,23 @@ $('#create-form').onsubmit = event => {
   });
 };
 $('#reviews').onchange = event => {
-  if (event.target.value) act(() => loadSnapshot(event.target.value));
+  const value = event.target.value;
+  // Keep the current review selected while a new one is being created,
+  // including when the user cancels the dialog or presses Escape.
+  if (snapshot) selectReview();
+  else event.target.value = '';
+  if (busy) return;
+  if (value === 'new') openNewReview();
+  else if (value) act(() => loadSnapshot(value));
 };
 $('#snapshots').onchange = event => act(() => loadSnapshot(event.target.value));
 $('#refresh').onclick = () => act(async () => {
   const result = await api('refresh/', {review_id: snapshot.review_id});
   await loadSnapshot(result.snapshot_id);
   await loadReviews();
-  notice('New snapshot captured. Earlier comments remain on their original snapshot.');
+  notice(result.snapshot_created ?
+    'Local changes loaded into a new snapshot. Earlier comments remain on their original snapshot.' :
+    'No changes on disk. Showing the latest snapshot.');
 });
 $('#general').onclick = () => {
   closeComposer();
@@ -546,7 +722,7 @@ $('#export').onclick = () => act(async () => {
   $('#copy-again').focus({preventScroll: true});
   // Keep draft replies intact while refreshing handoff metadata.
   snapshot.batches.push({id: result.batch_id, imported: false});
-  $('#batch-info').textContent = 'Handoff ready. Import replies after Codex writes its response file.';
+  $('#batch-info').textContent = 'Handoff ready. When your agent finishes, click Import replies.';
 });
 async function importReplies(snapshotId) {
   const position = $('#handoff-dialog').open ? handoffPosition : readingPosition();
@@ -555,8 +731,10 @@ async function importReplies(snapshotId) {
   await loadSnapshot(result.snapshot_id);
   await loadReviews();
   const updated = result.snapshot_id !== snapshotId;
+  const currentNumber = snapshot.snapshots.find(item => item.id === result.snapshot_id).number;
+  const replyNumber = snapshot.snapshots.find(item => item.id === snapshotId).number;
   const message = `${result.imported} replies imported.${result.imported ? '' : ' No new completed response files found.'}` +
-    (updated ? ` Showing current code in snapshot #${result.snapshot_id}. Replies remain on snapshot #${snapshotId}.` : '') +
+    (updated ? ` Showing current code in snapshot #${currentNumber}. Replies remain on snapshot #${replyNumber}.` : '') +
     (result.errors.length ? ` ${result.errors.join(' ')}` : '');
   if (result.imported > 0 && !result.errors.length) {
     $('#handoff-dialog').close();

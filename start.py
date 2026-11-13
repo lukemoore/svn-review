@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Set up SVN Review, start its local server, and open the browser."""
+"""Set up Code Review, start its local server, and open the browser."""
 
 import os
 from pathlib import Path
@@ -24,8 +24,8 @@ def main():
     try:
         if sys.version_info < (3, 10):
             raise RuntimeError('Install Python 3.10 or later, then try again.')
-        if not shutil.which('svn'):
-            raise RuntimeError('Install Subversion (svn), then try again.')
+        if not (shutil.which('git') or shutil.which('svn')):
+            raise RuntimeError('Install Git or Subversion (svn), then try again.')
         # Do not open an unrelated service that happens to use our port.
         with socket.socket() as probe:
             if os.name != 'nt':
@@ -40,7 +40,7 @@ def main():
 
         python = prepare_environment()
         run(python, ROOT / 'manage.py', 'migrate', '--noinput')
-        print(f'Starting SVN Review at {URL}', flush=True)
+        print(f'Starting Code Review at {URL}', flush=True)
         server = subprocess.Popen([
             str(python), str(ROOT / 'manage.py'), 'runserver',
             f'{ADDRESS[0]}:{ADDRESS[1]}', '--noreload'], cwd=ROOT)
@@ -54,10 +54,10 @@ def main():
             print(f'Open {URL} in your browser.', flush=True)
         return server.wait()
     except KeyboardInterrupt:
-        print('\nStopping SVN Review.', flush=True)
+        print('\nStopping Code Review.', flush=True)
         return 0
     except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
-        print(f'Could not start SVN Review: {error}', file=sys.stderr)
+        print(f'Could not start Code Review: {error}', file=sys.stderr)
         return 1
     finally:
         if server is not None and server.poll() is None:

@@ -1,12 +1,13 @@
-# SVN Review
+# Code Review
 
-Review local SVN changes in your browser and send questions or change requests
-to a **fresh Codex session on the same computer**. Replies return to the original
-comment threads through a JSON file. No API keys or model calls are used.
+Review local Git or SVN changes in your browser. Send questions or change
+requests to **Codex, Claude Code, Pi, or another coding agent** in a new or
+existing session with access to your local files. Replies return to the
+original comment threads through a JSON file. No API keys or model calls are used.
 
 ## Start
 
-Requires Python 3.10 or later and the `svn` command.
+Requires Python 3.10 or later and the `git` or `svn` command for your working copy.
 
 Clone the project and start it:
 
@@ -62,26 +63,31 @@ files. Never force-add private files.
 
 ## Review and respond
 
-1. Select **New review**, then **Browse…** to choose a local folder in the
-   folder browser. You can also enter an SVN working-copy directory. You can use a
-   subdirectory to limit the review. The app runs `svn diff --internal-diff`
-   with 12 context lines and saves the result.
+1. Select **New review** at the top or **＋ New review…** in the review
+   menu, then **Browse…** to choose a local folder in the
+   folder browser. You can also enter a Git or SVN working-copy directory.
+   Use a subdirectory to limit the review. The app detects the repository
+   type and saves your changes for review. Git captures staged and unstaged
+   tracked changes together against HEAD (or an empty tree before the first
+   commit). SVN uses
+   `svn diff --internal-diff`.
 2. Select code text on the new side, then click **Add comment** beside the
    selection. The comment box stays visible at the bottom of the screen.
    Alternatively, select a line number and Shift-click a second line number to
    select a range within the same hunk. Write a question or change request and
    select **Save comment**. Use **Add general comment** for deleted files,
    properties, binary files, or broader questions.
-3. Select **Copy Codex prompt**. Paste it into a new Codex session on this
-   computer, preferably opened in the reviewed working copy. The prompt includes
+3. Select **Send comments to agent**. Paste it into a new or existing coding-agent session
+   with access to these local files, preferably opened in the reviewed working
+   copy. The prompt includes
    absolute paths to the saved context and diff, the working-copy path, stable
    comment IDs, and an exact response-file format. A manual-copy fallback is
    shown if the browser cannot write to the clipboard.
-4. Codex implements requests or answers questions and writes the response file.
+4. Your agent implements requests or answers questions and writes the response file.
    If its sandbox needs permission to write outside the working copy, it asks
    for that permission. The prompt also explains how to return JSON for you to
    save manually when a file write is unavailable.
-5. Select **Import replies** in the prompt dialog or the page toolbar. Replies
+5. When your agent finishes, select **Import replies** in the prompt dialog or the page toolbar. Replies
    stay under their original comments. After a response has been imported, the
    app also checks the working copy and captures a new snapshot if the diff has
    changed. A successful import closes the dialog and shows the current code.
@@ -93,9 +99,32 @@ files. Never force-add private files.
 6. Add follow-up replies and copy a new prompt. Each handoff includes the full
    thread for every unresolved comment in the selected snapshot. Use **Resolve**
    to exclude completed threads. Imported replies never resolve threads for you.
-7. Use **Capture new snapshot** for code changes made outside the reply-import
-   flow. Codex does not capture snapshots itself. Earlier diffs and threads
-   stay intact. Use the snapshot menu to return to them and import their replies.
+7. On the latest snapshot, use **Reload from disk** in the snapshot toolbar
+   for code changes made outside the reply-import flow. The agent does not capture snapshots itself. If the code has not changed, the latest snapshot is reused. Earlier diffs
+   and threads stay intact. Snapshot numbers start at 1 in each review. Use the snapshot menu to return to them and import their replies.
+
+The file list uses compact status badges: **M** for modified, **A** for added,
+and **D** for removed. Hover over a file for the full status. These describe
+the saved snapshot. A **?** means the saved diff lacks status information,
+such as an SVN binary diff without file headers.
+
+Use the review menu to switch between projects. Each saved review opens its
+latest snapshot and restores its reading position. Creating a new review keeps
+your existing reviews and comments.
+
+## Find comments in the diff
+
+The bar on the right maps comments in the selected snapshot. Blue bands mark
+open threads. Muted green bands mark resolved threads. Each thin band marks one
+comment section. Nearby bands are spaced apart so they remain distinct in
+large diffs. General comments appear at the top. The outlined area shows the
+visible part of the review.
+
+Click a band to jump to its thread. Thin lines mark the start and end of each
+file. Use the stacked up and down buttons above the bar to visit all threads
+in page order, including resolved threads. Navigation wraps at either
+end. When comments overlap, the buttons let you visit each thread. Hover over
+a band to see its location, status, and first comment.
 
 ## Review replies and resume reading
 
@@ -104,10 +133,13 @@ output JSON. Explanations, questions, decisions, and blocked or unsafe requests
 need your review. A straightforward fix that was completed and checked can use
 `false` when you do not need to respond. Both kinds of reply remain in the thread.
 
-The sticky toolbar shows how many replies need review across all snapshots of
-the current review. Use **Next reply** and **Previous reply** to visit them.
-These buttons open the reply's original snapshot and scroll to the reply.
-Use **Mark reviewed** to remove it from the queue without resolving the thread.
+The sticky toolbar shows a red badge with the number of replies needing review
+across all snapshots of the current review. Use **Next reply needing review**
+to visit them. This button opens the reply's original snapshot, scrolls to the
+reply, and marks it as reviewed. The count decreases automatically. After the
+last reply, the badge disappears and the button is disabled. Use **Latest
+snapshot** when you finish reading. For replies you open manually, **Mark
+reviewed** removes them from the queue without resolving the thread.
 Adding a follow-up acknowledges the earlier replies in that thread. Resolving
 a thread also removes its replies from the queue.
 
@@ -126,18 +158,20 @@ response files should always include the boolean flag.
 
 - Displays unified diffs with old and new line numbers. Binary/property notices
   are displayed as text. Line comments apply to text on the new side.
-- Shows tracked SVN changes, including added and deleted files. Unversioned
-  files do not appear until you add them with SVN. External working copies need
-  their own review. No commit, update, add, or revert is run by the app.
+- Shows tracked Git or SVN changes, including added and deleted files.
+  Untracked files do not appear until you add them with Git or SVN. SVN
+  externals and Git submodules need their own review for file-level changes.
+  Git renames appear as a deletion and an addition. No commit, update, add,
+  or revert is run by the app.
 - A snapshot is a saved diff, not a lock on your working copy. Avoid editing
-  files during capture. Codex is told to inspect the current files and map old
-  anchors before editing. The displayed root revision does not describe every
+  files during capture. The agent is told to inspect the current files and map old
+  anchors before editing. For SVN, the root revision does not describe every
   file in a mixed-revision working copy; the saved diff has file revision headers.
 - Diff capture has a 60-second timeout and a 20 MB output limit. Non-UTF-8 text
   is displayed with replacement characters. It is never written back to source.
 - `var/reviews.sqlite3` stores reviews, snapshots, and threads.
 - `var/handoffs/<batch-id>/` stores `prompt.txt`, `context.json`, `snapshot.diff`,
-  and the Codex-written `response.json`. Keep these files private: they contain
+  and the agent-written `response.json`. Keep these files private: they contain
   source code and review comments. Back up the whole `var/` directory to keep
   both the review history and handoffs. Stop the server before copying it.
 - Once a response file is imported, do not edit it. Add a follow-up and create a
@@ -155,5 +189,5 @@ response files should always include the boolean flag.
 .venv/bin/python manage.py test review
 ```
 
-The tests use an isolated local SVN repository (`svnadmin` must be installed),
-temporary files, and a test database. They do not call Codex or any paid API.
+The tests use isolated local Git and SVN repositories (`git`, `svn`, and
+`svnadmin` must be installed), temporary files, and a test database. They do not call a coding agent or any paid API.
