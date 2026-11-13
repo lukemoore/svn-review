@@ -59,8 +59,15 @@ stickySizes.observe($('.toolbar'));
 
 function readingPosition() {
   const top = Math.max(0, $('.toolbar').getBoundingClientRect().bottom);
-  const row = [...document.querySelectorAll('#diff tr[data-line]')].find(
-    row => row.getBoundingClientRect().top >= top);
+  const rows = document.querySelectorAll('#diff tr[data-line]');
+  // Diff rows are in page order. Avoid measuring thousands of offscreen rows.
+  let start = 0, end = rows.length;
+  while (start < end) {
+    const middle = Math.floor((start + end) / 2);
+    if (rows[middle].getBoundingClientRect().top < top) start = middle + 1;
+    else end = middle;
+  }
+  const row = rows[start];
   return {x: window.scrollX, y: window.scrollY, path: row?.dataset.path,
     line: Number(row?.dataset.line), offset: row?.getBoundingClientRect().top - top};
 }
@@ -175,8 +182,8 @@ function renderReviewNavigation() {
   $('#review-progress').textContent = count;
   $('#review-count').textContent = queue.length;
   $('#review-count').hidden = !queue.length;
-  $('#review-next').disabled = !queue.length;
-  $('#review-next').setAttribute('aria-label', `Next reply needing review, ${count}`);
+  $('#review-next').hidden = !queue.length;
+  $('#review-next').setAttribute('aria-label', `Jump to first reply needing review, ${count}`);
   const latest = snapshot.id === snapshot.snapshots[0].id;
   $('#latest-snapshot').disabled = latest;
   $('#refresh').hidden = !latest;
@@ -186,20 +193,49 @@ async function jumpToReview() {
   const queue = snapshot.review_queue;
   if (!queue.length) return;
   const message = queue[0];
-  await loadSnapshot(message.comment__snapshot_id);
-  const entry = document.getElementById(`message-${message.id}`);
+  if (snapshot.id !== message.comment__snapshot_id) {
+    await loadSnapshot(message.comment__snapshot_id);
+  }
+  scrollToReply(message.id);
+}
+
+async function markReplyReviewed(messageId) {
+  await api('reviewed/', {message_id: messageId});
+  // Acknowledging a reply does not change the frozen diff. Keep its DOM.
+  snapshot.review_queue = snapshot.review_queue.filter(item => item.id !== messageId);
+  for (const comment of snapshot.comments) {
+    const message = comment.messages.find(item => item.id === messageId);
+    if (message) message.reviewed = true;
+  }
+  const reviewed = document.getElementById(`message-${messageId}`);
+  reviewed.classList.remove('needs-review');
+  reviewed.querySelector('.review-message')?.remove();
+  renderReviewNavigation();
+  await advanceAfterReview(messageId);
+}
+
+async function advanceAfterReview(messageId) {
+  const messages = [...document.querySelectorAll('#review .message')];
+  const index = messages.findIndex(entry => entry.id === `message-${messageId}`);
+  // Continue in page order, wrapping within this snapshot if necessary.
+  const next = [...messages.slice(index + 1), ...messages.slice(0, index)]
+    .find(entry => entry.classList.contains('needs-review'));
+  if (next) scrollToReply(next.id.slice('message-'.length));
+  else if (snapshot.id !== snapshot.snapshots[0].id) {
+    await loadSnapshot(snapshot.snapshots[0].id);
+  }
+}
+
+function scrollToReply(messageId) {
+  const entry = document.getElementById(`message-${messageId}`);
   if (entry) {
-    entry.scrollIntoView({block: 'start', behavior: 'instant'});
-    entry.focus({preventScroll: true});
-    await api('reviewed/', {message_id: message.id});
-    snapshot.review_queue = snapshot.review_queue.filter(item => item.id !== message.id);
-    for (const comment of snapshot.comments) {
-      const opened = comment.messages.find(item => item.id === message.id);
-      if (opened) opened.reviewed = true;
+    // Show the question that prompted this reply, including follow-ups.
+    let question = entry.previousElementSibling;
+    while (question && !question.matches('.message.user')) {
+      question = question.previousElementSibling;
     }
-    entry.classList.remove('needs-review');
-    entry.querySelector('.review-message')?.remove();
-    renderReviewNavigation();
+    (question || entry).scrollIntoView({block: 'start', behavior: 'instant'});
+    entry.focus({preventScroll: true});
     rememberPosition();
   }
 }
@@ -215,7 +251,10 @@ function render() {
   selectReview();
   $('#snapshots').replaceChildren();
   snapshot.snapshots.forEach((item, index) => {
-    const option = node('option', '', `#${item.number} · ${new Date(item.created).toLocaleString()}${index === 0 ? ' · latest' : ''}`);
+    const created = new Date(item.created);
+    const date = [created.getFullYear(), String(created.getMonth() + 1).padStart(2, '0'),
+      String(created.getDate()).padStart(2, '0')].join('/');
+    const option = node('option', '', `#${item.number} · ${date}, ${created.toLocaleTimeString()}${index === 0 ? ' · latest' : ''}`);
     option.value = item.id;
     option.selected = item.id === snapshot.id;
     $('#snapshots').append(option);
@@ -228,6 +267,7 @@ function render() {
   $('#general-threads').replaceChildren();
   $('#file-count').textContent = snapshot.files.length;
   $('#thread-count').textContent = snapshot.comments.filter(c => !c.resolved).length;
+  $('#export').hidden = !snapshot.has_comments_to_send;
   const pending = snapshot.batches.filter(b => !b.imported).length;
   $('#batch-info').textContent = pending ? `${pending} handoff(s) awaiting replies. Import replies checks their local response files.` : '';
   snapshot.comments.forEach(comment => {
@@ -343,7 +383,7 @@ function renderCommentOverview() {
     return {id: comment.id, element, band};
   });
   $('#comment-overview').hidden = false;
-  $('#comment-previous').disabled = $('#comment-next').disabled = !commentTargets.length;
+  $('#comment-previous').hidden = $('#comment-next').hidden = !commentTargets.length;
   $('#comment-progress').textContent = `${commentTargets.length} comments in this snapshot`;
   scheduleCommentOverview();
 }
@@ -392,16 +432,13 @@ function updateCommentOverview() {
   if (!snapshot) return;
   const top = Math.max(0, $('.toolbar').getBoundingClientRect().bottom) + 8;
   const bottom = $('#composer').hidden ? 12 : $('#composer').offsetHeight + 12;
-  updateCurrentFile(top, window.innerHeight - bottom);
-  $('#comment-overview').style.top = `${top}px`;
-  $('#comment-overview').style.bottom = `${bottom}px`;
   const start = $('#general-threads').getBoundingClientRect().top;
   const end = $('#diff').getBoundingClientRect().bottom;
   const height = Math.max(1, end - start);
   const percent = y => Math.max(0, Math.min(100, (y - start) / height * 100));
-  fileBoundaries.forEach(({element, edge, line}) => {
-    line.style.top = `${percent(element.getBoundingClientRect()[edge])}%`;
-  });
+  // Read geometry before changing styles to avoid repeated page layouts.
+  const boundaries = fileBoundaries.map(({element, edge}) =>
+    percent(element.getBoundingClientRect()[edge]));
   const trackHeight = $('#comment-track').clientHeight;
   const count = commentTargets.length;
   const spacing = Math.min(10, trackHeight / Math.max(1, count));
@@ -409,6 +446,12 @@ function updateCommentOverview() {
   const positions = commentTargets.map(target =>
     percent(target.element.getBoundingClientRect().top) / 100 *
       (trackHeight - bandHeight));
+  updateCurrentFile(top, window.innerHeight - bottom);
+  $('#comment-overview').style.top = `${top}px`;
+  $('#comment-overview').style.bottom = `${bottom}px`;
+  fileBoundaries.forEach(({line}, index) => {
+    line.style.top = `${boundaries[index]}%`;
+  });
   // A large diff can put several threads in the same few pixels. Spread
   // those markers just enough to keep each one visible and clickable.
   for (let i = 1; i < count; i++) {
@@ -480,9 +523,11 @@ function thread(comment) {
     label.addEventListener('blur', () => { focused = false; highlight(); });
   }
   heading.append(label);
-  const resolve = node('button', '', comment.resolved ? 'Reopen' : 'Resolve');
+  const resolve = node('button', 'thread-action',
+    comment.can_delete ? 'Delete' : comment.resolved ? 'Reopen' : 'Resolve');
   resolve.addEventListener('click', () => act(async () => {
-    await api('resolve/', {comment_id: comment.id, resolved: !comment.resolved});
+    await api(comment.can_delete ? 'delete/' : 'resolve/',
+      {comment_id: comment.id, resolved: !comment.resolved});
     await loadSnapshot(snapshot.id);
   }));
   heading.append(resolve);
@@ -494,15 +539,19 @@ function thread(comment) {
     if (!newComment) {
       entry.append(node('div', 'author', message.author === 'user' ? 'You' : 'Agent'));
     }
-    entry.append(node('div', 'message-body', message.body));
+    const body = node('div', 'message-body', message.body);
+    if (message.author === 'codex' && typeof message.body_html === 'string') {
+      // Only use HTML produced by the server's restricted Markdown renderer.
+      body.classList.add('markdown');
+      body.innerHTML = message.body_html;
+    }
+    entry.append(body);
     if (message.author === 'codex' && message.needs_review && !message.reviewed && !comment.resolved) {
       entry.classList.add('needs-review');
       const reviewed = node('button', 'review-message', 'Mark reviewed');
+      reviewed.dataset.icon = 'circle-check';
       reviewed.type = 'button';
-      reviewed.onclick = () => act(async () => {
-        await api('reviewed/', {message_id: message.id});
-        await loadSnapshot(snapshot.id);
-      });
+      reviewed.onclick = () => act(() => markReplyReviewed(message.id));
       entry.append(reviewed);
     }
     box.append(entry);
@@ -548,7 +597,11 @@ function thread(comment) {
     act(async () => {
       await api(newComment ? 'edit/' : 'reply/', {comment_id: comment.id, body: input.value});
       await loadSnapshot(snapshot.id);
-      document.getElementById(`comment-${comment.id}`).scrollIntoView({block: 'center'});
+      if (newComment) {
+        document.getElementById(`comment-${comment.id}`).scrollIntoView({block: 'center'});
+      } else {
+        await advanceAfterReview(comment.messages[comment.messages.length - 1].id);
+      }
     });
   });
   box.append(form);
@@ -771,6 +824,13 @@ $('#export').onclick = () => act(async () => {
   $('#copy-again').focus({preventScroll: true});
   // Keep draft replies intact while refreshing handoff metadata.
   snapshot.batches.push({id: result.batch_id, imported: false});
+  const sentIds = new Set(result.comment_ids);
+  for (const comment of snapshot.comments) {
+    if (!sentIds.has(comment.id)) continue;
+    comment.can_delete = false;
+    document.getElementById(`comment-${comment.id}`).querySelector('.thread-action')
+      .textContent = comment.resolved ? 'Reopen' : 'Resolve';
+  }
   $('#batch-info').textContent = 'Handoff ready. When your agent finishes, click Import replies.';
   await copyPrompt();
 });
@@ -782,21 +842,22 @@ async function importReplies(snapshotId) {
   await loadReviews();
   const updated = result.snapshot_id !== snapshotId;
   const currentNumber = snapshot.snapshots.find(item => item.id === result.snapshot_id).number;
-  const replyNumber = snapshot.snapshots.find(item => item.id === snapshotId).number;
+  const warnings = result.warnings || [];
   const message = `${result.imported} replies imported.${result.imported ? '' : ' No new completed response files found.'}` +
-    (updated ? ` Showing current code in snapshot #${currentNumber}. Replies remain on snapshot #${replyNumber}.` : '') +
-    (result.errors.length ? ` ${result.errors.join(' ')}` : '');
+    (updated ? ` Showing current code in snapshot #${currentNumber}. Replies remain on their original snapshots.` : '') +
+    (result.errors.length ? ` ${result.errors.join(' ')}` : '') +
+    (warnings.length ? ` ${warnings.join(' ')}` : '');
   if (result.imported > 0 && !result.errors.length) {
     $('#handoff-dialog').close();
   }
-  notice(message, !!result.errors.length);
+  notice(message, !!(result.errors.length || warnings.length));
   if ($('#handoff-dialog').open) {
     $('#handoff-status').textContent = message;
     $('#handoff-status').hidden = false;
     $('#handoff-results').hidden = false;
-  } else if (updated) {
+  } else if (result.imported > 0 && result.reply_snapshot_id !== snapshot.id) {
     const replies = node('button', '', 'View replies');
-    replies.onclick = () => act(() => loadSnapshot(snapshotId));
+    replies.onclick = () => act(() => loadSnapshot(result.reply_snapshot_id));
     $('#notice').append(document.createTextNode(' '), replies);
   }
   if (!$('#handoff-dialog').open && position) {

@@ -7,7 +7,7 @@ from unittest.mock import patch
 from django.test import Client, TestCase, override_settings
 
 from .models import Batch, Comment, Message, Snapshot
-from .views import parse_diff
+from .views import detect_repository, parse_diff
 
 
 class ReviewTests(TestCase):
@@ -71,6 +71,124 @@ class ReviewTests(TestCase):
         }))
         return path
 
+    def test_export_collects_project_comments_with_original_diffs(self):
+        first = self.create()
+        first_id = self.comment(first)
+        resolved_id = self.comment(first, 'Already done.')
+        self.post('resolve', {'comment_id': resolved_id, 'resolved': True})
+        self.source.write_text(self.original.replace('line 3\n', 'updated\n'))
+        second_id = self.post('refresh', {
+            'review_id': first.review_id})['snapshot_id']
+        second = Snapshot.objects.get(pk=second_id)
+        other = self.create()
+        self.comment(other, 'Another project.')
+
+        # A snapshot with no comments can send an older snapshot's threads.
+        handoff = self.post('export', {'snapshot_id': second.id})
+        self.assertEqual([b['id'] for b in Batch.objects.get(
+            pk=handoff['batch_id']).blocks], [first_id])
+        second_comment = self.comment(second)
+        for selected in (first, second):
+            handoff = self.post('export', {'snapshot_id': selected.id})
+            directory = Path(handoff['response_path']).parent
+            context = json.loads((directory / 'context.json').read_text())
+            self.assertEqual([(b['id'], b['snapshot_id'])
+                              for b in context['blocks']],
+                             [(first_id, first.id), (second_comment, second.id)])
+            self.assertEqual(len(context['snapshots']), 2)
+            for source, expected in zip(context['snapshots'], (first, second)):
+                self.assertEqual(source['snapshot_id'], expected.id)
+                self.assertEqual(source['snapshot_sha256'], expected.digest)
+                self.assertEqual(source['base_revision'], expected.revision)
+                self.assertEqual((directory / source['diff_file']).read_text(),
+                                 expected.diff)
+        self.response_file(handoff, [
+            {'comment_id': first_id, 'reply': 'First reply.'},
+            {'comment_id': second_comment, 'reply': 'Second reply.'},
+        ])
+        result = self.post('import', {'snapshot_id': first.id})
+        self.assertEqual(result['imported'], 2)
+        self.assertEqual(result['reply_snapshot_id'], first.id)
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(Message.objects.filter(
+            comment__snapshot=first, author='codex').count(), 1)
+        self.assertEqual(Message.objects.filter(
+            comment__snapshot=second, author='codex').count(), 1)
+        self.assertEqual(self.post('import', {
+            'snapshot_id': second.id})['imported'], 0)
+        data = self.client.get('/api/snapshot/', {'id': first.id}).json()
+        self.assertIn(handoff['batch_id'], [b['id'] for b in data['batches']])
+
+    def test_send_availability_tracks_unresolved_project_comments(self):
+        first = self.create()
+        self.source.write_text(self.original.replace('line 3\n', 'updated\n'))
+        second_id = self.post('refresh', {
+            'review_id': first.review_id})['snapshot_id']
+        other = self.create()
+        self.comment(other)
+        for resolved in (None, False, True, False):
+            if resolved is False and not Comment.objects.filter(
+                    snapshot=first).exists():
+                comment_id = self.comment(first)
+            elif resolved is not None:
+                self.post('resolve', {
+                    'comment_id': comment_id, 'resolved': resolved})
+            for snapshot_id in (first.id, second_id):
+                data = self.client.get('/api/snapshot/', {
+                    'id': snapshot_id}).json()
+                self.assertEqual(data['has_comments_to_send'],
+                                 resolved is False)
+                if resolved is not False:
+                    self.post('export', {'snapshot_id': snapshot_id}, status=400)
+        self.assertContains(self.client.get('/'),
+                            'class="primary" hidden>Send comments to agent')
+
+    def test_answered_threads_require_a_user_followup_before_sending(self):
+        first = self.create()
+        comment_id = self.comment(first)
+        handoff = self.post('export', {'snapshot_id': first.id})
+        self.source.write_text(self.original.replace('line 3\n', 'updated\n'))
+        self.response_file(handoff, [
+            {'comment_id': comment_id, 'reply': 'Here is the answer.',
+             'needs_review': True}])
+        latest_id = self.post('import', {
+            'snapshot_id': first.id})['snapshot_id']
+        reply = Message.objects.get(comment_id=comment_id, author='codex')
+        for reviewed in (False, True):
+            if reviewed:
+                self.post('reviewed', {'message_id': reply.id})
+            for snapshot_id in (first.id, latest_id):
+                data = self.client.get('/api/snapshot/', {
+                    'id': snapshot_id}).json()
+                self.assertFalse(data['has_comments_to_send'])
+                self.post('export', {'snapshot_id': snapshot_id}, status=400)
+        self.post('resolve', {'comment_id': comment_id, 'resolved': True})
+        self.post('resolve', {'comment_id': comment_id, 'resolved': False})
+        self.post('export', {'snapshot_id': latest_id}, status=400)
+
+        # A new question must not resend another thread's answered question.
+        fresh_id = self.comment(Snapshot.objects.get(pk=latest_id))
+        handoff = self.post('export', {'snapshot_id': first.id})
+        self.assertEqual([b['id'] for b in Batch.objects.get(
+            pk=handoff['batch_id']).blocks], [fresh_id])
+        self.post('resolve', {'comment_id': fresh_id, 'resolved': True})
+        self.post('reply', {'comment_id': comment_id, 'body': 'Please clarify.'})
+        for snapshot_id in (first.id, latest_id):
+            data = self.client.get('/api/snapshot/', {'id': snapshot_id}).json()
+            self.assertTrue(data['has_comments_to_send'])
+            handoff = self.post('export', {'snapshot_id': snapshot_id})
+            blocks = Batch.objects.get(pk=handoff['batch_id']).blocks
+            self.assertEqual([b['id'] for b in blocks], [comment_id])
+            self.assertEqual([m['author'] for m in blocks[0]['messages']],
+                             ['user', 'codex', 'user'])
+        self.response_file(handoff, [
+            {'comment_id': comment_id, 'reply': 'Clarification.',
+             'needs_review': False}])
+        self.post('import', {'snapshot_id': latest_id})
+        data = self.client.get('/api/snapshot/', {'id': first.id}).json()
+        self.assertFalse(data['has_comments_to_send'])
+        self.post('export', {'snapshot_id': first.id}, status=400)
+
     def test_capture_context_and_snapshot_preservation(self):
         first = self.create()
         comment_id = self.comment(first)
@@ -90,6 +208,52 @@ class ReviewTests(TestCase):
         self.assertEqual(len(response['snapshots']), 2)
         listing = self.client.get('/api/reviews/').json()['reviews']
         self.assertEqual(listing[0]['latest_snapshot'], second['snapshot_id'])
+
+    def test_delete_unsent_comment_removes_its_messages(self):
+        snapshot = self.create()
+        comment_id = self.comment(snapshot)
+        data = self.client.get('/api/snapshot/', {'id': snapshot.id}).json()
+        self.assertTrue(data['comments'][0]['can_delete'])
+        self.post('delete', {'comment_id': comment_id})
+        self.assertFalse(Comment.objects.filter(pk=comment_id).exists())
+        self.assertFalse(Message.objects.filter(comment_id=comment_id).exists())
+        data = self.client.get('/api/snapshot/', {'id': snapshot.id}).json()
+        self.assertEqual(data['comments'], [])
+        self.assertFalse(data['has_comments_to_send'])
+        self.post('delete', {'comment_id': comment_id}, status=404)
+
+    def test_sent_comment_cannot_be_deleted_before_or_after_reply(self):
+        first = self.create()
+        comment_id = self.comment(first)
+        self.source.write_text(self.original.replace('line 3\n', 'updated\n'))
+        latest_id = self.post('refresh', {
+            'review_id': first.review_id})['snapshot_id']
+        handoff = self.post('export', {'snapshot_id': latest_id})
+        self.assertEqual(handoff['comment_ids'], [comment_id])
+        self.post('edit', {'comment_id': comment_id, 'body': 'Updated question'})
+        for imported in (False, True):
+            if imported:
+                self.response_file(handoff, [
+                    {'comment_id': comment_id, 'reply': 'An answer.'}])
+                self.post('import', {'snapshot_id': latest_id})
+            data = self.client.get('/api/snapshot/', {'id': first.id}).json()
+            self.assertFalse(data['comments'][0]['can_delete'])
+            for resolved in (False, True):
+                self.post('resolve', {
+                    'comment_id': comment_id, 'resolved': resolved})
+                result = self.post('delete', {'comment_id': comment_id},
+                                   status=400)
+                self.assertIn('Resolve it instead', result['error'])
+                comment = Comment.objects.get(pk=comment_id)
+                self.assertEqual(comment.resolved, resolved)
+                self.assertEqual(comment.message_set.count(), 2 if imported else 1)
+        # Existing handoffs do not protect newly added, unsent comments.
+        fresh_id = self.comment(first)
+        data = self.client.get('/api/snapshot/', {'id': first.id}).json()
+        self.assertTrue(next(c for c in data['comments']
+                             if c['id'] == fresh_id)['can_delete'])
+        self.post('delete', {'comment_id': fresh_id})
+        self.assertTrue(Comment.objects.filter(pk=comment_id).exists())
 
     def test_edit_new_comment_preserves_message_and_exported_context(self):
         snapshot = self.create()
@@ -213,6 +377,8 @@ class ReviewTests(TestCase):
                          'snapshot.diff', 'response.json', comment_id):
             self.assertIn(required, handoff['prompt'])
         self.assertIn('new or existing coding-agent session', handoff['prompt'])
+        self.assertIn('ASD-STE100', handoff['prompt'])
+        self.assertIn('Markdown inside each reply string', handoff['prompt'])
         self.assertNotIn('Codex', handoff['prompt'])
         directory = Path(handoff['response_path']).parent
         context = json.loads((directory / 'context.json').read_text())
@@ -223,7 +389,8 @@ class ReviewTests(TestCase):
             {'comment_id': comment_id, 'reply': 'This changes the sample.'}])
         imported = self.post('import', {'snapshot_id': snapshot.id})
         self.assertEqual(imported, {
-            'imported': 1, 'errors': [], 'snapshot_id': snapshot.id,
+            'imported': 1, 'errors': [], 'warnings': [],
+            'snapshot_id': snapshot.id, 'reply_snapshot_id': snapshot.id,
             'snapshot_created': False})
         self.assertEqual(self.post('import', {'snapshot_id': snapshot.id})[
             'imported'], 0)
@@ -270,6 +437,42 @@ class ReviewTests(TestCase):
                          '')
         self.assertEqual(Message.objects.filter(author='codex').count(), 1)
 
+    def test_imported_markdown_is_rendered_safely_and_kept_in_context(self):
+        snapshot = self.create()
+        comment_id = self.comment(snapshot)
+        handoff = self.post('export', {'snapshot_id': snapshot.id})
+        body = (
+            '**Answer** with `code` and [docs](https://example.com).\n\n'
+            '- First\n- Second\n\n'
+            '```python\nprint("<safe>")\n```\n\n'
+            '| Name | Value |\n| --- | --- |\n| x | 1 |\n\n'
+            '<script>alert(1)</script>\n\n'
+            '[unsafe](javascript:alert%281%29)\n\n'
+            '![image](https://example.com/image.png)')
+        self.response_file(handoff, [
+            {'comment_id': comment_id, 'reply': body}])
+        result = self.post('import', {'snapshot_id': snapshot.id})
+        self.assertEqual(result['imported'], 1)
+        data = self.client.get('/api/snapshot/', {'id': snapshot.id}).json()
+        messages = data['comments'][0]['messages']
+        self.assertNotIn('body_html', messages[0])
+        self.assertEqual(messages[-1]['body'], body)
+        html = messages[-1]['body_html']
+        for expected in ('<strong>Answer</strong>', '<code>code</code>',
+                         '<ul>', '<pre><code class="language-python">',
+                         '<table>', 'href="https://example.com"',
+                         '&lt;script&gt;', '&lt;safe&gt;'):
+            self.assertIn(expected, html)
+        for unsafe in ('<script', '<img', 'href="javascript:'):
+            self.assertNotIn(unsafe, html)
+        self.post('reply', {'comment_id': comment_id, 'body': 'Please clarify.'})
+        followup = self.post('export', {'snapshot_id': snapshot.id})
+        context = json.loads((Path(followup['response_path']).parent /
+                              'context.json').read_text())
+        saved = context['blocks'][0]['messages'][-2]
+        self.assertEqual(saved['body'], body)
+        self.assertNotIn('body_html', saved)
+
     def test_import_keeps_replies_when_diff_capture_fails(self):
         snapshot = self.create()
         comment_id = self.comment(snapshot)
@@ -279,9 +482,50 @@ class ReviewTests(TestCase):
         with patch('review.views.capture_diff', side_effect=ValueError('Offline')):
             result = self.post('import', {'snapshot_id': snapshot.id})
         self.assertEqual(result['imported'], 1)
-        self.assertIn('could not be refreshed', result['errors'][0])
+        self.assertEqual(result['errors'], [])
+        self.assertIn('could not be refreshed', result['warnings'][0])
         self.assertEqual(result['snapshot_id'], snapshot.id)
         self.assertEqual(Message.objects.filter(author='codex').count(), 1)
+
+    def test_svn_detection_ignores_injected_git_directory(self):
+        with tempfile.TemporaryDirectory(dir=self.working_copy) as directory:
+            nested = Path(directory)
+            (nested / '.git').mkdir()
+            child = nested / 'help'
+            child.mkdir()
+            self.assertEqual(detect_repository(child), 'svn')
+            self.assertFalse((nested / '.git').exists())
+
+    def test_svn_detection_with_empty_git_at_same_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / '.svn').mkdir()
+            (root / '.git').mkdir()
+            self.assertEqual(detect_repository(root), 'svn')
+            self.assertFalse((root / '.git').exists())
+
+    def test_svn_detection_when_empty_git_cannot_be_removed(self):
+        with tempfile.TemporaryDirectory(dir=self.working_copy) as directory:
+            nested = Path(directory)
+            (nested / '.git').mkdir()
+            with patch.object(Path, 'rmdir', side_effect=PermissionError):
+                self.assertEqual(detect_repository(nested), 'svn')
+            self.assertTrue((nested / '.git').exists())
+
+    def test_svn_detection_preserves_nonempty_git_metadata(self):
+        with tempfile.TemporaryDirectory(dir=self.working_copy) as directory:
+            nested = Path(directory)
+            (nested / '.git').mkdir()
+            marker = nested / '.git' / 'keep'
+            marker.write_text('Preserve this file.')
+            self.assertEqual(detect_repository(nested), 'svn')
+            self.assertEqual(marker.read_text(), 'Preserve this file.')
+
+    def test_real_git_checkout_inside_svn_is_detected(self):
+        with tempfile.TemporaryDirectory(dir=self.working_copy) as directory:
+            nested = Path(directory)
+            self.command('git', 'init', str(nested))
+            self.assertEqual(detect_repository(nested), 'git')
 
     def test_invalid_import_is_atomic_and_changed_import_is_rejected(self):
         snapshot = self.create()

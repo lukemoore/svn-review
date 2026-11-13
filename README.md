@@ -93,34 +93,50 @@ files. Never force-add private files.
    selection. The comment box stays visible at the bottom of the screen.
    Alternatively, select a line number and Shift-click a second line number to
    select a range within the same hunk. Write a question or change request and
-   select **Save comment**. Use **Add general comment** for deleted files,
+   select **Save comment**. Use **Add session-wide comment** for deleted files,
    properties, binary files, or broader questions.
    A new comment shows **Edit** instead of a reply box. Use **Save changes**
    or **Cancel** after editing. Once a thread has replies, use the reply box
    for follow-ups. Edits do not change prompts you already copied.
-3. Select **Send comments to agent**. Paste it into a new or existing coding-agent session
+   Use **Delete** to remove a comment that has never been sent. After a
+   handoff includes it, use **Resolve/Reopen** to keep its history instead.
+3. Select **Send comments to agent** from any snapshot. It includes all
+   unresolved threads in the project whose latest message is from you, with
+   their original snapshot diffs. Answered threads are sent again only after
+   you add a follow-up. The button is hidden when no threads need an answer.
+   Paste the prompt into a new or existing coding-agent session
    with access to these local files, preferably opened in the reviewed working
    copy. The prompt includes
    absolute paths to the saved context and diff, the working-copy path, stable
    comment IDs, and an exact response-file format. A manual-copy fallback is
    shown if the browser cannot write to the clipboard.
 4. Your agent implements requests or answers questions and writes the response file.
+   The prompt asks for ASD-STE100 Simplified Technical English principles:
+   short, clear answers that preserve exact technical meaning. Agent replies
+   support Markdown, including lists, links, tables, and code blocks. Raw HTML
+   and embedded images are disabled. The response file remains a JSON document,
+   with Markdown inside each reply string.
    If its sandbox needs permission to write outside the working copy, it asks
    for that permission. The prompt also explains how to return JSON for you to
    save manually when a file write is unavailable.
-5. When your agent finishes, select **Import replies** in the prompt dialog or the page toolbar. Replies
+5. When your agent finishes, select **Import replies** in the prompt dialog or the page toolbar. Import checks handoffs across all snapshots in the
+   project. Replies
    stay under their original comments. After a response has been imported, the
    app also checks the working copy and captures a new snapshot if the diff has
    changed. A successful import closes the dialog and shows the current code.
-   Use **View replies** to return to the reviewed snapshot. The dialog stays
-   open if there are errors or no new replies. Repeated imports duplicate
+   Use **View replies** to open the first snapshot with imported replies. The dialog stays
+   open if reply files have errors or there are no new replies. If only the
+   code refresh fails, the dialog closes and a warning explains that replies
+   are saved. Read the replies, then use **Reload diffs** to retry.
+   Repeated imports duplicate
    neither replies nor unchanged snapshots.
    Invalid files produce an error and do not partially import. A handoff must
    contain one reply for every block.
 6. Add follow-up replies and copy a new prompt. Each handoff includes the full
-   thread for every unresolved comment in the selected snapshot. Use **Resolve**
-   to exclude completed threads. Imported replies never resolve threads for you.
-7. On the latest snapshot, use **Reload from disk** in the snapshot toolbar
+   conversation for each unresolved thread awaiting an agent answer across
+   all snapshots. Use **Resolve** to exclude completed threads. Imported
+   replies never resolve threads for you.
+7. On the latest snapshot, use **Reload diffs** in the snapshot toolbar
    for code changes made outside the reply-import flow. The agent does not capture snapshots itself. If the code has not changed, the latest snapshot is reused. Earlier diffs
    and threads stay intact. Snapshot numbers start at 1 in each review. Use the snapshot menu to return to them and import their replies.
 
@@ -155,14 +171,23 @@ need your review. A straightforward fix that was completed and checked can use
 `false` when you do not need to respond. Both kinds of reply remain in the thread.
 
 The sticky toolbar shows a red badge with the number of replies needing review
-across all snapshots of the current review. Use **Next reply needing review**
-to visit them. This button opens the reply's original snapshot, scrolls to the
-reply, and marks it as reviewed. The count decreases automatically. After the
-last reply, the badge disappears and the button is disabled. Use **Latest
-snapshot** when you finish reading. For replies you open manually, **Mark
-reviewed** removes them from the queue without resolving the thread.
-Adding a follow-up acknowledges the earlier replies in that thread. Resolving
-a thread also removes its replies from the queue.
+across all snapshots of the current review. Use **Jump to first reply needing
+review** to open the first pending reply's original snapshot and scroll to
+your question. Jumping does not mark the reply as reviewed. Select **Mark
+reviewed** on the reply when you finish reading it. This removes it from the
+queue without resolving the thread and jumps to the next pending reply's
+question in the same snapshot, wrapping to earlier pending replies if needed.
+If none remain in that snapshot, the app opens the latest snapshot.
+After the last reply is marked reviewed,
+the badge and jump button disappear. **Previous comment** and
+**Next comment** are on the same toolbar row and are hidden when the snapshot
+has no comments. **Send comments to agent** is at the right end of that row. **Latest snapshot** is beside
+the snapshot dropdown.
+Selecting **Mark reviewed** does not request another agent answer. Saving
+**Add reply** acknowledges the earlier replies in that thread and advances
+using the same navigation as **Mark reviewed**. The new reply is included
+the next time you send comments to the agent. Resolving a thread also removes
+its replies from the queue.
 
 Use **Latest snapshot** to return to the current code at your saved reading
 position. Each snapshot has its own position, including after jumping to a
@@ -191,7 +216,7 @@ response files should always include the boolean flag.
 - Diff capture has a 60-second timeout and a 20 MB output limit. Non-UTF-8 text
   is displayed with replacement characters. It is never written back to source.
 - `var/reviews.sqlite3` stores reviews, snapshots, and threads.
-- `var/handoffs/<batch-id>/` stores `prompt.txt`, `context.json`, `snapshot.diff`,
+- `var/handoffs/<batch-id>/` stores `prompt.txt`, `context.json`, `snapshot.diff`, source `snapshot-<id>.diff` files,
   and the agent-written `response.json`. Keep these files private: they contain
   source code and review comments. Back up the whole `var/` directory to keep
   both the review history and handoffs. Stop the server before copying it.

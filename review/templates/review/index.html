@@ -40,15 +40,19 @@
             <h1 id="title"></h1><p id="path" class="path"></p></div>
         </div>
         <div class="toolbar">
-          <label>Snapshot <select id="snapshots"></select></label>
-          <button id="refresh" title="Read local changes and save a new snapshot if the code changed. Earlier comments are kept.">Reload from disk</button>
-          <button id="general">Add general comment</button>
-          <button id="import">Import replies</button>
-          <button id="export" class="primary">Send comments to agent</button>
-          <nav class="review-navigation" aria-label="Replies needing review">
-            <button id="review-next" type="button">Next reply needing review <span id="review-count" class="review-count">0</span></button>
+          <div class="snapshot-navigation">
+            <label>Snapshot <select id="snapshots"></select></label>
+            <button id="latest-snapshot" data-icon="layers" type="button">Latest snapshot</button>
+          </div>
+          <button id="refresh" data-icon="refresh-cw" title="Read local changes and save a new snapshot if the code changed. Earlier comments are kept.">Reload diffs</button>
+          <button id="general" data-icon="message-square-plus">Add session-wide comment</button>
+          <button id="import" data-icon="download">Import replies</button>
+          <nav class="review-navigation" aria-label="Comments and replies">
+            <button id="comment-previous" hidden data-icon="arrow-up" type="button" title="Previous comment (wraps to last)">Previous comment</button>
+            <button id="comment-next" hidden data-icon="arrow-down" type="button" title="Next comment (wraps to first)">Next comment</button>
+            <button id="review-next" hidden data-icon="message-square-exclamation-point" type="button">Jump to first reply needing review <span id="review-count" class="review-count">0</span></button>
+            <button id="export" data-icon="send" class="primary" hidden>Send comments to agent</button>
             <span id="review-progress" class="sr-only" role="status"></span>
-            <button id="latest-snapshot" type="button">Latest snapshot</button>
           </nav>
         </div>
         <p class="hint">Select code text, then click <strong>Add comment</strong>
@@ -61,10 +65,6 @@
     </main>
   </div>
   <nav id="comment-overview" class="comment-overview" aria-label="Comments in this snapshot" hidden>
-    <div class="comment-buttons">
-      <button id="comment-previous" type="button" aria-label="Previous comment" title="Previous comment (wraps to last)">↑</button>
-      <button id="comment-next" type="button" aria-label="Next comment" title="Next comment (wraps to first)">↓</button>
-    </div>
     <span id="comment-progress" class="sr-only" role="status"></span>
     <div id="comment-track" class="comment-track" aria-label="Comment locations">
       <div id="comment-viewport" class="comment-viewport" aria-hidden="true"></div>
@@ -72,7 +72,7 @@
       <div id="comment-bands"></div>
     </div>
   </nav>
-  <button id="selection-comment" class="primary" type="button" hidden>Add comment</button>
+  <button id="selection-comment" data-icon="message-square-plus" class="primary" type="button" hidden>Add comment</button>
   <form id="composer" class="composer" hidden>
     <div><strong id="selection-label"></strong>
       <button type="button" id="cancel-comment">Cancel</button></div>
@@ -135,7 +135,7 @@
     </div>
     <div class="dialog-actions"><button id="close-handoff">Close</button>
       <button class="primary" id="copy-again">Copy prompt</button>
-      <button id="handoff-import" class="primary" hidden>Import replies</button></div>
+      <button id="handoff-import" data-icon="download" class="primary" hidden>Import replies</button></div>
   </dialog>
 </body>
 </html>

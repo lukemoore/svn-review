@@ -4,6 +4,16 @@
 body { margin: 0; background: #f5f7fa; color: var(--ink); font: 14px/1.5 system-ui, sans-serif; }
 button, input, select, textarea { font: inherit; }
 button { border: 1px solid #cbd4df; border-radius: 6px; background: white; color: var(--ink); padding: 7px 12px; cursor: pointer; }
+button[data-icon]::before { content: ""; display: inline-block; width: 16px; height: 16px; margin-right: 6px; vertical-align: -3px; background: currentColor; mask: var(--button-icon) center / contain no-repeat; }
+[data-icon="arrow-up"] { --button-icon: url("icons/arrow-up.svg"); }
+[data-icon="arrow-down"] { --button-icon: url("icons/arrow-down.svg"); }
+[data-icon="message-square-exclamation-point"] { --button-icon: url("icons/message-square-exclamation-point.svg"); }
+[data-icon="circle-check"] { --button-icon: url("icons/circle-check.svg"); }
+[data-icon="layers"] { --button-icon: url("icons/layers.svg"); }
+[data-icon="refresh-cw"] { --button-icon: url("icons/refresh-cw.svg"); }
+[data-icon="download"] { --button-icon: url("icons/download.svg"); }
+[data-icon="send"] { --button-icon: url("icons/send.svg"); }
+[data-icon="message-square-plus"] { --button-icon: url("icons/message-square-plus.svg"); }
 button:hover { background: #edf2f9; border-color: #95aac6; }
 button.primary { background: var(--accent); border-color: var(--accent); color: white; }
 button.primary:hover { background: #194c9f; }
@@ -33,15 +43,16 @@ h1 { font-size: 27px; line-height: 1.2; letter-spacing: -.7px; margin: 8px 0; }
 .review-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
 .path { color: var(--muted); font: 12px ui-monospace, monospace; overflow-wrap: anywhere; }
 .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 24px 0 12px; padding: 14px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-.toolbar label { margin-right: auto; font-size: 12px; }
+.snapshot-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-right: auto; }
+.toolbar label { font-size: 12px; }
 .toolbar { position: sticky; top: var(--notice-height, 0px); z-index: 9; background: #f5f7fa; }
 html { scroll-padding-top: calc(var(--notice-height, 0px) + var(--toolbar-height, 0px)); }
 .toolbar select { margin-left: 7px; max-width: 290px; }
 .review-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; width: 100%; }
 .review-count { display: inline-block; min-width: 24px; margin-left: 6px; padding: 2px 6px; border-radius: 12px; color: white; background: #b42318; font-weight: 700; }
-#review-next:disabled .review-count { background: #657184; }
+.review-navigation #export { margin-left: auto; align-self: flex-start; }
 button:disabled { cursor: default; opacity: .5; }
-.message.needs-review { border-left: 3px solid var(--accent); }
+.message.needs-review { background: #fff3cd; border-left: 4px solid #b77900; }
 .message:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 .message { scroll-margin-top: 16px; }
 .review-message { margin-top: 10px; }
@@ -75,6 +86,14 @@ button:disabled { cursor: default; opacity: .5; }
 .author { font-size: 11px; font-weight: 750; color: #65798f; margin-bottom: 4px; }
 .codex { background: #f8faff; }
 .message-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.message-body.markdown { white-space: normal; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown pre { overflow-x: auto; padding: 12px; background: #edf0f4; white-space: pre; }
+.markdown code { font-family: monospace; background: #edf0f4; }
+.markdown blockquote { margin-left: 0; padding-left: 14px; border-left: 3px solid var(--border); }
+.markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.markdown th, .markdown td { padding: 6px 10px; border: 1px solid var(--border); }
 .reply-form { padding: 10px 14px; display: flex; align-items: flex-end; gap: 10px; border-top: 1px solid var(--border); }
 .reply-form button { white-space: nowrap; }
 .reply-form textarea { font-size: 12px; }
@@ -132,8 +151,6 @@ dialog h2 { font-size: 24px; margin: 8px 0 20px; }
 /* Keep the comment map outside the code and clear of the browser scrollbar. */
 body:has(#review:not([hidden])) main { padding-right: 24px; }
 .comment-overview { position: fixed; right: 1px; width: 20px; z-index: 8; display: flex; flex-direction: column; gap: 6px; min-height: 90px; }
-.comment-buttons { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: none; }
-.comment-buttons button { width: 20px; padding: 4px 0; font-size: 18px; }
 .comment-track { width: 18px; align-self: center; position: relative; flex: 1; min-height: 20px; background: #e3e9f1; border-radius: 4px; }
 .comment-viewport { position: absolute; z-index: 2; left: 0; right: 0; border: 2px solid #c45100; background: #ff980033; border-radius: 3px; pointer-events: none; }
 .comment-band { position: absolute; left: 1px; width: 16px; min-height: 0; max-height: 100%; padding: 0; border: 0; border-radius: 2px; background: #55c9ff; }
