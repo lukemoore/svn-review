@@ -119,14 +119,15 @@
   </dialog>
   <dialog id="handoff-dialog">
     <div class="eyebrow">AGENT HANDOFF</div><h2 id="handoff-title">Prompt ready</h2>
-    <p>Paste this into a new or existing session in Codex, Claude Code, Pi,
-      or another coding agent with access to these local files.
-      When your agent finishes, click <strong>Import replies</strong>
-      to load its response file and capture
-      the updated code. Earlier comments stay on their original snapshot.</p>
-    <label for="prompt">Review prompt</label>
-    <textarea id="prompt" readonly rows="12"></textarea>
-    <p class="hint" id="response-path"></p>
+    <ol>
+      <li>Paste the prompt into your coding agent with access to this project.</li>
+      <li>When the agent finishes, return here and click <strong>Import replies</strong>.</li>
+    </ol>
+    <div id="manual-prompt" hidden>
+      <p>Clipboard access failed. Copy the prompt below.</p>
+      <label for="prompt">Review prompt</label>
+      <textarea id="prompt" readonly rows="8"></textarea>
+    </div>
     <p id="handoff-status" role="status" aria-live="polite" hidden></p>
     <div id="handoff-results" hidden>
       <button id="view-replies">View replies</button>

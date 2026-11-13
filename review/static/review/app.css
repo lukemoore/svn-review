@@ -66,7 +66,8 @@ button:disabled { cursor: default; opacity: .5; }
 .line-range { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
 .line-range:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .thread { margin: 14px 20px; border: 1px solid #c6d5e9; border-left: 3px solid #5684c7; border-radius: 6px; background: white; max-width: 950px; font: 14px/1.5 system-ui, sans-serif; white-space: normal; scroll-margin-top: 20px; }
-.thread-heading { background: #f2f6fc; padding: 8px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+.thread-heading { background: #f2f6fc; padding: 8px 14px; display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.thread-heading > :first-child { margin-right: auto; }
 .thread-heading button { font-size: 11px; padding: 3px 9px; }
 .thread.resolved { border-color: #b8cbbb; }
 .thread.resolved .thread-heading { background: #eef5ef; }
@@ -129,21 +130,22 @@ dialog h2 { font-size: 24px; margin: 8px 0 20px; }
 }
 
 /* Keep the comment map outside the code and clear of the browser scrollbar. */
-body:has(#review:not([hidden])) main { padding-right: 42px; }
-.comment-overview { position: fixed; right: 5px; width: 28px; z-index: 8; display: flex; flex-direction: column; gap: 6px; min-height: 90px; }
+body:has(#review:not([hidden])) main { padding-right: 24px; }
+.comment-overview { position: fixed; right: 1px; width: 20px; z-index: 8; display: flex; flex-direction: column; gap: 6px; min-height: 90px; }
 .comment-buttons { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: none; }
-.comment-buttons button { width: 24px; padding: 4px 0; font-size: 18px; }
-.comment-track { width: 22px; align-self: center; position: relative; flex: 1; min-height: 20px; background: #e3e9f1; border-radius: 4px; }
-.comment-viewport { position: absolute; left: -3px; right: -3px; border: 1px solid #6d7e95; border-radius: 3px; pointer-events: none; }
-.comment-band { position: absolute; left: 3px; width: 16px; min-height: 0; max-height: 100%; padding: 0; border: 0; border-radius: 2px; background: #487ac5; }
+.comment-buttons button { width: 20px; padding: 4px 0; font-size: 18px; }
+.comment-track { width: 18px; align-self: center; position: relative; flex: 1; min-height: 20px; background: #e3e9f1; border-radius: 4px; }
+.comment-viewport { position: absolute; z-index: 2; left: 0; right: 0; border: 2px solid #c45100; background: #ff980033; border-radius: 3px; pointer-events: none; }
+.comment-band { position: absolute; left: 1px; width: 16px; min-height: 0; max-height: 100%; padding: 0; border: 0; border-radius: 2px; background: #55c9ff; }
 .comment-band.resolved { background: #a0b3a6; }
-.comment-band:hover, .comment-band.active { background: #173f80; z-index: 1; outline: 2px solid #173f80; }
+.comment-band:hover, .comment-band.active { background: #8cddff; z-index: 1; outline: 2px solid #008ac4; }
 .thread:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 600px) {
-  .thread-row .thread { width: calc(100vw - 102px); }
+  .thread-row .thread { width: calc(100vw - 84px); }
 }
 
 #files .file-link { display: flex; align-items: baseline; gap: 6px; }
+#files .file-link[aria-current="location"] { background: #dbe8fc; color: #173f80; box-shadow: inset 3px 0 #275fc0; font-weight: 700; }
 .file-name { min-width: 0; overflow-wrap: anywhere; }
 .file-status { flex: 0 0 16px; text-align: center; border-radius: 3px; font: 600 10px/16px ui-monospace, monospace; }
 .file-status.modified { color: #805600; background: #fff0cc; }
@@ -152,3 +154,7 @@ body:has(#review:not([hidden])) main { padding-right: 42px; }
 .file-status.unknown { color: #596574; background: #e1e6ec; }
 
 .file-boundary { position: absolute; left: 0; right: 0; height: 1px; background: #8795a7; pointer-events: none; }
+
+.comment-edit { flex-wrap: wrap; }
+.comment-edit textarea, .comment-edit .hint { flex-basis: 100%; }
+.comment-edit .hint { margin: 0; }

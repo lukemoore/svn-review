@@ -41,7 +41,7 @@ def api(request, action):
             raise ValueError('Expected a JSON object.')
         handlers = {
             'create': create_review, 'refresh': refresh_review,
-            'comment': add_comment, 'reply': add_reply,
+            'comment': add_comment, 'edit': edit_comment, 'reply': add_reply,
             'resolve': resolve_comment, 'export': export_prompt,
             'import': import_responses,
             'reviewed': mark_reviewed,
@@ -137,6 +137,19 @@ def add_comment(data):
         Message.objects.create(
             comment=comment, author='user', body=message_body(data))
     return {'comment_id': str(comment.id)}
+
+
+def edit_comment(data):
+    body = message_body(data)
+    with transaction.atomic():
+        comment = Comment.objects.get(pk=uuid.UUID(data['comment_id']))
+        messages = list(comment.message_set.order_by('id'))
+        if len(messages) != 1 or messages[0].author != 'user':
+            raise ValueError('This thread has replies. Add a follow-up instead.')
+        message = messages[0]
+        message.body = body
+        message.save(update_fields=['body'])
+    return {'ok': True}
 
 
 def add_reply(data):

@@ -91,6 +91,34 @@ class ReviewTests(TestCase):
         listing = self.client.get('/api/reviews/').json()['reviews']
         self.assertEqual(listing[0]['latest_snapshot'], second['snapshot_id'])
 
+    def test_edit_new_comment_preserves_message_and_exported_context(self):
+        snapshot = self.create()
+        comment_id = self.comment(snapshot, 'Original request')
+        message = Message.objects.get(comment_id=comment_id)
+        handoff = self.post('export', {'snapshot_id': snapshot.id})
+        self.post('edit', {'comment_id': comment_id, 'body': 'Updated request'})
+        message.refresh_from_db()
+        self.assertEqual(message.body, 'Updated request')
+        self.assertEqual(Message.objects.filter(comment_id=comment_id).count(), 1)
+        batch = Batch.objects.get(pk=handoff['batch_id'])
+        self.assertEqual(batch.blocks[0]['messages'][0]['body'],
+                         'Original request')
+        updated = self.post('export', {'snapshot_id': snapshot.id})
+        batch = Batch.objects.get(pk=updated['batch_id'])
+        self.assertEqual(batch.blocks[0]['messages'][0]['body'],
+                         'Updated request')
+
+    def test_edit_rejects_empty_text_and_threads_with_replies(self):
+        snapshot = self.create()
+        comment_id = self.comment(snapshot, 'Original request')
+        self.post('edit', {'comment_id': comment_id, 'body': ' '}, status=400)
+        Message.objects.create(comment_id=comment_id, author='codex',
+                               body='Agent response')
+        self.post('edit', {'comment_id': comment_id, 'body': 'Changed'},
+                  status=400)
+        self.assertEqual(Message.objects.filter(
+            comment_id=comment_id, author='user').get().body, 'Original request')
+
     def test_reload_reuses_unchanged_snapshot(self):
         first = self.create()
         comment_id = self.comment(first)

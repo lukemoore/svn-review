@@ -1,9 +1,26 @@
-# Code Review
+# Local Code Review
 
 Review local Git or SVN changes in your browser. Send questions or change
 requests to **Codex, Claude Code, Pi, or another coding agent** in a new or
 existing session with access to your local files. Replies return to the
 original comment threads through a JSON file. No API keys or model calls are used.
+
+## Install with your coding agent
+
+Paste this into Claude Code, Codex, or another agent that can run local commands:
+
+```text
+Install and run Local Code Review from
+https://github.com/lukemoore/local-code-review.
+Clone it into a local-code-review folder, or use an existing checkout if
+one is already present. Read its README, check that Python 3.10+ and Git
+are available (and SVN if I want to review SVN changes), then run
+python3 start.py from the checkout (py start.py on Windows).
+Keep the server running and give me the local URL to open in my browser.
+```
+
+The launcher creates a virtual environment and installs the app's dependencies.
+To set it up yourself, follow the steps below.
 
 ## Start
 
@@ -12,8 +29,8 @@ Requires Python 3.10 or later and the `git` or `svn` command for your working co
 Clone the project and start it:
 
 ```sh
-git clone https://github.com/lukemoore/svn-review.git
-cd svn-review
+git clone https://github.com/lukemoore/local-code-review.git
+cd local-code-review
 python3 start.py
 ```
 
@@ -77,6 +94,9 @@ files. Never force-add private files.
    select a range within the same hunk. Write a question or change request and
    select **Save comment**. Use **Add general comment** for deleted files,
    properties, binary files, or broader questions.
+   A new comment shows **Edit** instead of a reply box. Use **Save changes**
+   or **Cancel** after editing. Once a thread has replies, use the reply box
+   for follow-ups. Edits do not change prompts you already copied.
 3. Select **Send comments to agent**. Paste it into a new or existing coding-agent session
    with access to these local files, preferably opened in the reviewed working
    copy. The prompt includes

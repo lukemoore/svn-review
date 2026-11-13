@@ -392,6 +392,7 @@ function updateCommentOverview() {
   if (!snapshot) return;
   const top = Math.max(0, $('.toolbar').getBoundingClientRect().bottom) + 8;
   const bottom = $('#composer').hidden ? 12 : $('#composer').offsetHeight + 12;
+  updateCurrentFile(top, window.innerHeight - bottom);
   $('#comment-overview').style.top = `${top}px`;
   $('#comment-overview').style.bottom = `${bottom}px`;
   const start = $('#general-threads').getBoundingClientRect().top;
@@ -429,6 +430,21 @@ function updateCommentOverview() {
   $('#comment-viewport').style.height = `${Math.max(0, visibleEnd - visibleStart)}%`;
 }
 
+function updateCurrentFile(top, bottom) {
+  // Follow the first file visible below the sticky toolbar.
+  const current = [...document.querySelectorAll('#diff .file')].find(element => {
+    const bounds = element.getBoundingClientRect();
+    return bounds.bottom > top && bounds.top < bottom;
+  });
+  document.querySelectorAll('#files .file-link').forEach(link => {
+    if (current && link.hash === `#${current.id}`) {
+      link.setAttribute('aria-current', 'location');
+    } else {
+      link.removeAttribute('aria-current');
+    }
+  });
+}
+
 $('#comment-previous').onclick = () => stepComment(-1);
 $('#comment-next').onclick = () => stepComment(1);
 window.addEventListener('scroll', scheduleCommentOverview, {passive: true});
@@ -439,6 +455,7 @@ for (const selector of ['#diff', '#general-threads', '.toolbar', '#notice', '#co
 }
 
 function thread(comment) {
+  const newComment = comment.messages.length === 1 && comment.messages[0].author === 'user';
   const box = node('section', `thread${comment.resolved ? ' resolved' : ''}`);
   box.id = `comment-${comment.id}`;
   const heading = node('div', 'thread-heading');
@@ -474,7 +491,9 @@ function thread(comment) {
     const entry = node('div', `message ${message.author}`);
     entry.id = `message-${message.id}`;
     entry.tabIndex = -1;
-    entry.append(node('div', 'author', message.author === 'user' ? 'You' : 'Agent'));
+    if (!newComment) {
+      entry.append(node('div', 'author', message.author === 'user' ? 'You' : 'Agent'));
+    }
     entry.append(node('div', 'message-body', message.body));
     if (message.author === 'codex' && message.needs_review && !message.reviewed && !comment.resolved) {
       entry.classList.add('needs-review');
@@ -493,14 +512,41 @@ function thread(comment) {
   input.rows = 2;
   input.required = true;
   input.maxLength = 50000;
-  input.placeholder = 'Reply or ask a follow-up…';
-  input.setAttribute('aria-label', 'Reply to this thread');
-  const submit = node('button', '', 'Add reply');
+  input.placeholder = newComment ? 'Edit your comment…' : 'Reply or ask a follow-up…';
+  input.setAttribute('aria-label', newComment ? 'Edit comment' : 'Reply to this thread');
+  const submit = node('button', '', newComment ? 'Save changes' : 'Add reply');
   form.append(input, submit);
+  if (newComment) {
+    form.classList.add('comment-edit');
+    form.hidden = true;
+    const edit = node('button', '', 'Edit');
+    edit.type = 'button';
+    heading.insertBefore(edit, resolve);
+    const cancel = node('button', '', 'Cancel');
+    cancel.type = 'button';
+    form.append(cancel);
+    const original = box.querySelector('.message-body');
+    const closeEditor = () => {
+      form.hidden = true;
+      original.hidden = false;
+      edit.hidden = false;
+    };
+    cancel.onclick = closeEditor;
+    edit.onclick = () => {
+      input.value = comment.messages[0].body;
+      form.hidden = false;
+      original.hidden = true;
+      edit.hidden = true;
+      input.focus();
+    };
+    if (snapshot.batches.length) {
+      form.prepend(node('p', 'hint', 'Existing agent prompts keep the earlier text. Send comments to agent again after saving.'));
+    }
+  }
   form.addEventListener('submit', event => {
     event.preventDefault();
     act(async () => {
-      await api('reply/', {comment_id: comment.id, body: input.value});
+      await api(newComment ? 'edit/' : 'reply/', {comment_id: comment.id, body: input.value});
       await loadSnapshot(snapshot.id);
       document.getElementById(`comment-${comment.id}`).scrollIntoView({block: 'center'});
     });
@@ -637,7 +683,8 @@ async function copyPrompt() {
     await navigator.clipboard.writeText($('#prompt').value);
     promptCopied();
   } catch {
-    $('#handoff-title').textContent = 'Select and copy the prompt';
+    $('#handoff-title').textContent = 'Copy the prompt';
+    $('#manual-prompt').hidden = false;
     $('#prompt').focus();
     $('#prompt').select();
   }
@@ -645,8 +692,9 @@ async function copyPrompt() {
 
 function promptCopied() {
   $('#handoff-title').textContent = 'Prompt copied';
-  $('#handoff-status').textContent = 'Paste the prompt into your coding agent. When your agent finishes, click Import replies.';
-  $('#handoff-status').hidden = false;
+  $('#manual-prompt').hidden = true;
+  $('#handoff-status').hidden = true;
+  $('#copy-again').textContent = 'Copy again';
   $('#copy-again').classList.remove('primary');
   $('#handoff-import').hidden = false;
   $('#handoff-import').focus({preventScroll: true});
@@ -712,17 +760,19 @@ $('#export').onclick = () => act(async () => {
   importedSnapshotId = null;
   $('#handoff-status').hidden = true;
   $('#handoff-results').hidden = true;
-  $('#handoff-title').textContent = 'Prompt ready';
+  $('#handoff-title').textContent = 'Preparing prompt…';
+  $('#manual-prompt').hidden = true;
+  $('#copy-again').textContent = 'Copy prompt';
   $('#handoff-import').hidden = true;
   $('#copy-again').classList.add('primary');
   $('#prompt').value = result.prompt;
-  $('#response-path').textContent = `Response file: ${result.response_path}`;
   handoffPosition = actionPosition.position;
   $('#handoff-dialog').showModal();
   $('#copy-again').focus({preventScroll: true});
   // Keep draft replies intact while refreshing handoff metadata.
   snapshot.batches.push({id: result.batch_id, imported: false});
   $('#batch-info').textContent = 'Handoff ready. When your agent finishes, click Import replies.';
+  await copyPrompt();
 });
 async function importReplies(snapshotId) {
   const position = $('#handoff-dialog').open ? handoffPosition : readingPosition();
