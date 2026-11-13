@@ -16,7 +16,8 @@ Clone it into a local-code-review folder, or use an existing checkout if
 one is already present. Read its README, check that Python 3.10+ and Git
 are available (and SVN if I want to review SVN changes), then run
 python3 start.py from the checkout (py start.py on Windows).
-Keep the server running and give me the local URL to open in my browser.
+Keep the server running. The launcher opens my browser automatically.
+If that fails, give me the local URL to open manually.
 ```
 
 The launcher creates a virtual environment and installs the app's dependencies.
