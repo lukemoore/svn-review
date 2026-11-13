@@ -97,6 +97,31 @@ files. Never force-add private files.
    flow. Codex does not capture snapshots itself. Earlier diffs and threads
    stay intact. Use the snapshot menu to return to them and import their replies.
 
+## Review replies and resume reading
+
+Each model reply includes `needs_review: true` or `needs_review: false` in its
+output JSON. Explanations, questions, decisions, and blocked or unsafe requests
+need your review. A straightforward fix that was completed and checked can use
+`false` when you do not need to respond. Both kinds of reply remain in the thread.
+
+The sticky toolbar shows how many replies need review across all snapshots of
+the current review. Use **Next reply** and **Previous reply** to visit them.
+These buttons open the reply's original snapshot and scroll to the reply.
+Use **Mark reviewed** to remove it from the queue without resolving the thread.
+Adding a follow-up acknowledges the earlier replies in that thread. Resolving
+a thread also removes its replies from the queue.
+
+Use **Latest snapshot** to return to the current code at your saved reading
+position. Each snapshot has its own position, including after jumping to a
+reply. Positions are saved in this browser and survive a page reload. If browser
+storage is unavailable, they last until the page closes. When code moves, the
+app returns to the nearest available line in the same file, or to the previous
+scroll offset if that file is no longer in the diff.
+
+Replies imported before this feature remain in their threads. New imports of
+older response files without `needs_review` enter the queue by default. New
+response files should always include the boolean flag.
+
 ## Scope and storage
 
 - Displays unified diffs with old and new line numbers. Binary/property notices

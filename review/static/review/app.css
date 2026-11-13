@@ -37,6 +37,13 @@ h1 { font-size: 27px; line-height: 1.2; letter-spacing: -.7px; margin: 8px 0; }
 .toolbar { position: sticky; top: var(--notice-height, 0px); z-index: 9; background: #f5f7fa; }
 html { scroll-padding-top: calc(var(--notice-height, 0px) + var(--toolbar-height, 0px)); }
 .toolbar select { margin-left: 7px; max-width: 290px; }
+.review-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; width: 100%; }
+.review-navigation span { margin-right: auto; font-size: 12px; }
+button:disabled { cursor: default; opacity: .5; }
+.message.needs-review { border-left: 3px solid var(--accent); }
+.message:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+.message { scroll-margin-top: 16px; }
+.review-message { margin-top: 10px; }
 .hint { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .file { margin-top: 24px; background: white; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; scroll-margin-top: 16px; }
 .file-header { font: 600 13px ui-monospace, monospace; margin: 0; padding: 15px 18px; background: #f9fafc; display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }

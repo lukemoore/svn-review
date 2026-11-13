@@ -10,12 +10,47 @@ let folderRequest = 0;
 let handoffSnapshotId = null;
 let importedSnapshotId = null;
 let handoffPosition = null;
+let reviewMessageId = null;
+const snapshotPositions = new Map();
+let positionTimer;
+let actionPosition = null;
+
+function rememberPosition(position = readingPosition()) {
+  if (!snapshot) return;
+  snapshotPositions.set(snapshot.id, position);
+  try {
+    localStorage.setItem(`svn-review-position-${snapshot.id}`, JSON.stringify(position));
+  } catch { /* Navigation still works when browser storage is unavailable. */ }
+}
+
+function savedPosition(id) {
+  if (!snapshotPositions.has(id)) {
+    try {
+      const position = JSON.parse(localStorage.getItem(`svn-review-position-${id}`));
+      if (position && Number.isFinite(position.x) && Number.isFinite(position.y)) {
+        snapshotPositions.set(id, position);
+      }
+    } catch { /* Ignore missing or unreadable saved positions. */ }
+  }
+  return snapshotPositions.get(id);
+}
+
+window.addEventListener('scroll', () => {
+  clearTimeout(positionTimer);
+  positionTimer = setTimeout(() => {
+    if (!busy && !$('#handoff-dialog').open) rememberPosition();
+  }, 150);
+}, {passive: true});
+window.addEventListener('pagehide', () => {
+  if (!busy) rememberPosition($('#handoff-dialog').open ? handoffPosition : readingPosition());
+});
 
 // Notice text and wrapped toolbar buttons can change height on small screens.
-const stickySizes = new ResizeObserver(() => {
+function updateStickySizes() {
   document.documentElement.style.setProperty('--notice-height', `${$('#notice').offsetHeight}px`);
   document.documentElement.style.setProperty('--toolbar-height', `${$('.toolbar').offsetHeight}px`);
-});
+}
+const stickySizes = new ResizeObserver(updateStickySizes);
 stickySizes.observe($('#notice'));
 stickySizes.observe($('.toolbar'));
 
@@ -29,6 +64,7 @@ function readingPosition() {
 
 async function restoreReadingPosition(position) {
   // Wait for dialog focus restoration and the notice's new sticky height.
+  updateStickySizes();
   await new Promise(requestAnimationFrame);
   const rows = [...document.querySelectorAll('#diff tr[data-line]')].filter(
     row => row.dataset.path === position.path);
@@ -69,6 +105,8 @@ async function api(action, data) {
 
 async function act(callback) {
   if (busy) return;
+  actionPosition = snapshot ? {id: snapshot.id,
+    position: $('#handoff-dialog').open ? handoffPosition : readingPosition()} : null;
   busy = true;
   document.body.classList.add('busy');
   notice('');
@@ -108,11 +146,51 @@ function selectReview() {
 }
 
 async function loadSnapshot(id) {
-  snapshot = await api(`snapshot/?id=${encodeURIComponent(id)}`);
+  const previous = snapshot;
+  const position = actionPosition && actionPosition.id === previous?.id ? actionPosition.position :
+    ($('#handoff-dialog').open ? handoffPosition : readingPosition());
+  if (previous) rememberPosition(position);
+  const next = await api(`snapshot/?id=${encodeURIComponent(id)}`);
+  snapshot = next;
   history.replaceState(null, '', `?snapshot=${snapshot.id}`);
   closeComposer();
   render();
+  const target = savedPosition(snapshot.id) ||
+    (previous?.review_id === snapshot.review_id ? position : {x: 0, y: 0});
+  await restoreReadingPosition(target);
+  rememberPosition(target);
 }
+
+function renderReviewNavigation() {
+  const queue = snapshot.review_queue;
+  const index = queue.findIndex(message => message.id === reviewMessageId);
+  const count = queue.length === 1 ? '1 reply needs review' : `${queue.length} replies need review`;
+  $('#review-progress').textContent = index < 0 ? count :
+    `Reply ${index + 1} of ${queue.length} needing review`;
+  $('#review-previous').disabled = $('#review-next').disabled = !queue.length;
+  $('#latest-snapshot').disabled = snapshot.id === snapshot.snapshots[0].id;
+}
+
+async function jumpToReview(direction) {
+  const queue = snapshot.review_queue;
+  if (!queue.length) return;
+  const index = queue.findIndex(message => message.id === reviewMessageId);
+  const next = index < 0 ? (direction > 0 ? 0 : queue.length - 1) :
+    (index + direction + queue.length) % queue.length;
+  const message = queue[next];
+  reviewMessageId = message.id;
+  await loadSnapshot(message.comment__snapshot_id);
+  const entry = document.getElementById(`message-${message.id}`);
+  if (entry) {
+    entry.scrollIntoView({block: 'start', behavior: 'instant'});
+    entry.focus({preventScroll: true});
+    rememberPosition();
+  }
+}
+
+$('#review-previous').onclick = () => act(() => jumpToReview(-1));
+$('#review-next').onclick = () => act(() => jumpToReview(1));
+$('#latest-snapshot').onclick = () => act(() => loadSnapshot(snapshot.snapshots[0].id));
 
 function render() {
   $('#welcome').hidden = true;
@@ -127,6 +205,7 @@ function render() {
     option.selected = item.id === snapshot.id;
     $('#snapshots').append(option);
   });
+  renderReviewNavigation();
   $('#files').replaceChildren();
   $('#threads').replaceChildren();
   $('#diff').replaceChildren();
@@ -233,8 +312,20 @@ function thread(comment) {
   box.append(heading);
   comment.messages.forEach(message => {
     const entry = node('div', `message ${message.author}`);
+    entry.id = `message-${message.id}`;
+    entry.tabIndex = -1;
     entry.append(node('div', 'author', message.author === 'user' ? 'You' : 'Codex'));
     entry.append(node('div', 'message-body', message.body));
+    if (message.author === 'codex' && message.needs_review && !message.reviewed && !comment.resolved) {
+      entry.classList.add('needs-review');
+      const reviewed = node('button', 'review-message', 'Mark reviewed');
+      reviewed.type = 'button';
+      reviewed.onclick = () => act(async () => {
+        await api('reviewed/', {message_id: message.id});
+        await loadSnapshot(snapshot.id);
+      });
+      entry.append(reviewed);
+    }
     box.append(entry);
   });
   const form = node('form', 'reply-form');
@@ -450,7 +541,7 @@ $('#export').onclick = () => act(async () => {
   $('#copy-again').classList.add('primary');
   $('#prompt').value = result.prompt;
   $('#response-path').textContent = `Response file: ${result.response_path}`;
-  handoffPosition = readingPosition();
+  handoffPosition = actionPosition.position;
   $('#handoff-dialog').showModal();
   $('#copy-again').focus({preventScroll: true});
   // Keep draft replies intact while refreshing handoff metadata.
@@ -480,17 +571,22 @@ async function importReplies(snapshotId) {
     replies.onclick = () => act(() => loadSnapshot(snapshotId));
     $('#notice').append(document.createTextNode(' '), replies);
   }
-  if (!$('#handoff-dialog').open && position) await restoreReadingPosition(position);
+  if (!$('#handoff-dialog').open && position) {
+    await restoreReadingPosition(position);
+    rememberPosition();
+  }
 }
 $('#import').onclick = () => act(() => importReplies(snapshot.id));
 $('#handoff-import').onclick = () => act(() => importReplies(handoffSnapshotId));
 $('#view-replies').onclick = () => act(async () => {
   await loadSnapshot(handoffSnapshotId);
   $('#handoff-dialog').close();
+  await restoreReadingPosition(savedPosition(snapshot.id));
 });
 $('#view-code').onclick = () => act(async () => {
   await loadSnapshot(importedSnapshotId);
   $('#handoff-dialog').close();
+  await restoreReadingPosition(savedPosition(snapshot.id));
 });
 $('#close-handoff').onclick = () => $('#handoff-dialog').close();
 $('#copy-again').onclick = copyPrompt;

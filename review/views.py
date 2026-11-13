@@ -43,6 +43,7 @@ def api(request, action):
             'comment': add_comment, 'reply': add_reply,
             'resolve': resolve_comment, 'export': export_prompt,
             'import': import_responses,
+            'reviewed': mark_reviewed,
         }
         if action not in handlers:
             raise ValueError('Unknown action.')
@@ -51,7 +52,7 @@ def api(request, action):
             ET.ParseError) as error:
         return JsonResponse({'error': str(error)}, status=400)
     except (Review.DoesNotExist, Snapshot.DoesNotExist,
-            Comment.DoesNotExist):
+            Comment.DoesNotExist, Message.DoesNotExist):
         return JsonResponse({'error': 'Review item not found.'}, status=404)
 
 
@@ -104,6 +105,11 @@ def snapshot_data(snapshot_id):
                      .order_by('created')],
         'batches': list(snapshot.batch_set.order_by('-created').values(
             'id', 'created', 'imported')),
+        'review_queue': list(Message.objects.filter(
+            comment__snapshot__review=review, comment__resolved=False,
+            author='codex', needs_review=True, reviewed=False
+        ).order_by('comment__snapshot_id', 'id').values(
+            'id', 'comment_id', 'comment__snapshot_id')),
     }
 
 
@@ -137,6 +143,14 @@ def add_reply(data):
             comment=comment, author='user', body=message_body(data))
         comment.resolved = False
         comment.save(update_fields=['resolved'])
+        comment.message_set.filter(author='codex').update(reviewed=True)
+    return {'ok': True}
+
+
+def mark_reviewed(data):
+    message = Message.objects.get(pk=data['message_id'], author='codex')
+    message.reviewed = True
+    message.save(update_fields=['reviewed'])
     return {'ok': True}
 
 
@@ -169,7 +183,8 @@ def export_prompt(data):
     (directory / 'snapshot.diff').write_text(snapshot.diff, encoding='utf-8')
     response_path = directory / 'response.json'
     example = {'batch_id': str(batch.id), 'responses': [
-        {'comment_id': b['id'], 'reply': 'Your answer or change summary.'}
+        {'comment_id': b['id'], 'reply': 'Your answer or change summary.',
+         'needs_review': True}
         for b in blocks]}
     prompt = (
         'Respond to my existing SVN review comments in a fresh Codex '
@@ -201,6 +216,16 @@ def export_prompt(data):
         'rename it when complete so the server cannot read a partial file. '
         'The review page will import the replies into their original '
         'threads. Do not edit the review database.\n\n'
+        'Include a boolean needs_review for every reply. Set it to true '
+        'when I need to read an explanation, answer a question, clarify a '
+        'request, choose between alternatives, approve a change, or address '
+        'a blocker or failed validation. Also use true when a requested '
+        'change would be harmful and you need to explain why. Set it to '
+        'false only when you completed and checked a straightforward fix '
+        'and no answer or decision is needed from me. This includes an '
+        'obvious fix implied by my question when no explanation needs my '
+        'attention. If uncertain, use true. Always include a useful reply, '
+        'even when needs_review is false.\n\n'
         f'Response file: {response_path}\n'
         f'Required format:\n{json.dumps(example, indent=2)}\n\n'
         'If the response path is outside your writable workspace, request '
@@ -279,8 +304,14 @@ def import_batch(batch_id, path):
                 raise ValueError('Duplicate comment ID.')
             seen.add(comment_id)
             body = message_body({'body': response.get('reply')})
+            # Older handoffs have no flag. Keep their answers visible for
+            # review rather than silently treating them as completed fixes.
+            needs_review = response.get('needs_review', True)
+            if type(needs_review) is not bool:
+                raise ValueError('needs_review must be true or false.')
             Message.objects.create(
-                comment_id=comment_id, author='codex', body=body)
+                comment_id=comment_id, author='codex', body=body,
+                needs_review=needs_review)
         if seen != expected:
             raise ValueError('Include exactly one reply for every block.')
         batch.imported = True
@@ -295,7 +326,7 @@ def comment_data(comment):
         'start': comment.start, 'end': comment.end,
         'resolved': comment.resolved,
         'messages': list(comment.message_set.order_by('id').values(
-            'id', 'author', 'body')),
+            'id', 'author', 'body', 'needs_review', 'reviewed')),
     }
 
 

@@ -32,6 +32,8 @@ class Message(models.Model):
     comment = models.ForeignKey(Comment, on_delete=models.CASCADE)
     author = models.CharField(max_length=10)
     body = models.TextField()
+    needs_review = models.BooleanField(default=False)
+    reviewed = models.BooleanField(default=False)
     created = models.DateTimeField(auto_now_add=True)
 
 

@@ -91,6 +91,69 @@ class ReviewTests(TestCase):
         listing = self.client.get('/api/reviews/').json()['reviews']
         self.assertEqual(listing[0]['latest_snapshot'], second['snapshot_id'])
 
+    def test_review_queue_spans_snapshots_and_can_be_acknowledged(self):
+        first = self.create()
+        comment_id = self.comment(first)
+        fixed_id = self.comment(first, 'Fix this.')
+        handoff = self.post('export', {'snapshot_id': first.id})
+        self.assertIn('needs_review', handoff['prompt'])
+        self.response_file(handoff, [
+            {'comment_id': comment_id, 'reply': 'Which behavior do you want?',
+             'needs_review': True},
+            {'comment_id': fixed_id, 'reply': 'Fixed and checked.',
+             'needs_review': False},
+        ])
+        self.source.write_text(self.original.replace('line 3\n', 'fixed\n'))
+        result = self.post('import', {'snapshot_id': first.id})
+        latest = result['snapshot_id']
+        self.assertNotEqual(latest, first.id)
+        message = Message.objects.get(comment_id=comment_id, author='codex')
+        expected = [{'id': message.id, 'comment_id': comment_id,
+                     'comment__snapshot_id': first.id}]
+        for snapshot_id in (first.id, latest):
+            data = self.client.get('/api/snapshot/', {
+                'id': snapshot_id}).json()
+            self.assertEqual(data['review_queue'], expected)
+        other = self.create()
+        self.assertEqual(self.client.get('/api/snapshot/', {
+            'id': other.id}).json()['review_queue'], [])
+        self.post('reviewed', {'message_id': message.id})
+        self.assertEqual(self.client.get('/api/snapshot/', {
+            'id': latest}).json()['review_queue'], [])
+        self.assertFalse(Comment.objects.get(pk=comment_id).resolved)
+        message.refresh_from_db()
+        self.assertTrue(message.needs_review)
+        self.assertTrue(message.reviewed)
+
+    def test_review_flag_validation_is_atomic_and_legacy_replies_are_visible(self):
+        snapshot = self.create()
+        first = self.comment(snapshot)
+        second = self.comment(snapshot, 'Another question')
+        handoff = self.post('export', {'snapshot_id': snapshot.id})
+        for invalid in ('false', 0, None, []):
+            self.response_file(handoff, [
+                {'comment_id': first, 'reply': 'Answer', 'needs_review': True},
+                {'comment_id': second, 'reply': 'Answer',
+                 'needs_review': invalid},
+            ])
+            result = self.post('import', {'snapshot_id': snapshot.id})
+            self.assertTrue(result['errors'])
+            self.assertFalse(Message.objects.filter(author='codex').exists())
+            self.assertFalse(Batch.objects.get(pk=handoff['batch_id']).imported)
+        self.response_file(handoff, [
+            {'comment_id': c, 'reply': 'Legacy answer'} for c in (first, second)])
+        self.post('import', {'snapshot_id': snapshot.id})
+        self.assertEqual(Message.objects.filter(needs_review=True).count(), 2)
+        self.post('import', {'snapshot_id': snapshot.id})
+        self.assertEqual(Message.objects.filter(needs_review=True).count(), 2)
+        self.post('resolve', {'comment_id': first, 'resolved': True})
+        queue = self.client.get('/api/snapshot/', {
+            'id': snapshot.id}).json()['review_queue']
+        self.assertEqual([m['comment_id'] for m in queue], [second])
+        self.post('reply', {'comment_id': second, 'body': 'Use option A.'})
+        self.assertEqual(self.client.get('/api/snapshot/', {
+            'id': snapshot.id}).json()['review_queue'], [])
+
     def test_fresh_session_handoff_import_and_followup(self):
         snapshot = self.create()
         comment_id = self.comment(snapshot)
